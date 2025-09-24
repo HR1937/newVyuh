@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VyuhMitra - AI-Powered Train Traffic Control Dashboard</title>
+    <link rel="stylesheet" href="css/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header Section -->
+        <header class="dashboard-header">
+            <div class="header-content">
+                <h1>🚂 VyuhMitra Control Dashboard</h1>
+                <p>AI-Powered Train Traffic Control System | Smart India Hackathon 2024</p>
+                <div class="header-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Section:</span>
+                        <span id="section-name" class="stat-value">Loading...</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">System:</span>
+                        <span id="system-status" class="stat-value">Initializing</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Last Update:</span>
+                        <span id="last-update" class="stat-value">--:--</span>
+                    </div>
+                    <div class="stat-item">
+                        <button id="refresh-btn" class="refresh-btn">🔄 Refresh Data</button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <div class="dashboard-grid">
+
+            <!-- KPI Overview Cards -->
+            <div class="card kpi-overview">
+                <h3>📊 Key Performance Indicators</h3>
+                <div class="kpi-grid">
+                    <div class="kpi-card throughput">
+                        <div class="kpi-icon">🚊</div>
+                        <div class="kpi-value" id="total-trains">0</div>
+                        <div class="kpi-label">Active Trains</div>
+                    </div>
+                    <div class="kpi-card efficiency">
+                        <div class="kpi-icon">⚡</div>
+                        <div class="kpi-value" id="throughput">0.0</div>
+                        <div class="kpi-label">Trains/Hour</div>
+                    </div>
+                    <div class="kpi-card safety">
+                        <div class="kpi-icon">🚨</div>
+                        <div class="kpi-value" id="abnormalities-count">0</div>
+                        <div class="kpi-label">Abnormalities</div>
+                    </div>
+                    <div class="kpi-card performance">
+                        <div class="kpi-icon">📈</div>
+                        <div class="kpi-value" id="efficiency-score">0</div>
+                        <div class="kpi-label">Efficiency Score</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Abnormalities Panel -->
+            <div class="card abnormalities-panel">
+                <h3>🚨 Active Abnormalities & AI Detection</h3>
+                <div class="abnormality-stats">
+                    <div class="abnormality-summary">
+                        <span class="high-severity" id="high-severity">0</span> High Priority
+                        <span class="medium-severity" id="medium-severity">0</span> Medium Priority
+                    </div>
+                </div>
+                <div id="abnormalities-list" class="abnormalities-container">
+                    <div class="loading-spinner">
+                        <div class="spinner"></div>
+                        <p>Scanning for abnormalities...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Solution Recommendations -->
+            <div class="card solutions-panel">
+                <h3>🤖 AI Solution Recommendations</h3>
+                <div class="solution-stats">
+                    <span id="active-solutions-count">0</span> Active Solutions |
+                    <span id="ai-acceptance-rate">85%</span> Acceptance Rate |
+                    <span id="ml-confidence">87%</span> ML Confidence
+                </div>
+                <div id="solutions-list" class="solutions-container">
+                    <div class="no-solutions">
+                        <div class="ai-icon">🧠</div>
+                        <p>AI monitoring for optimal solutions...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Real-time Train Schedule Visualization -->
+            <div class="card schedule-visualization">
+                <h3>🚆 Live Train Schedule & Optimization</h3>
+                <div class="schedule-controls">
+                    <button id="schedule-view-btn" class="view-btn active" data-view="timeline">Timeline View</button>
+                    <button id="table-view-btn" class="view-btn" data-view="table">Table View</button>
+                    <button id="simulation-btn" class="simulation-btn">▶️ Simulate Movement</button>
+                </div>
+
+                <!-- Timeline View -->
+                <div id="timeline-view" class="schedule-view active">
+                    <canvas id="scheduleChart" width="800" height="400"></canvas>
+                </div>
+
+                <!-- Table View -->
+                <div id="table-view" class="schedule-view">
+                    <div class="table-wrapper">
+                        <table id="trainTable" class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Train ID</th>
+                                    <th>Name</th>
+                                    <th>Static Entry</th>
+                                    <th>Optimized Entry</th>
+                                    <th>Deviation</th>
+                                    <th>Status</th>
+                                    <th>Platform</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="train-table-body">
+                                <tr><td colspan="8" class="loading">Loading train schedule data...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Performance Analytics Chart -->
+            <div class="card performance-chart">
+                <h3>📈 System Performance Trends</h3>
+                <div class="chart-controls">
+                    <select id="chart-metric" class="metric-selector">
+                        <option value="throughput">Throughput (Trains/Hr)</option>
+                        <option value="efficiency">Efficiency Score</option>
+                        <option value="delays">Average Delays</option>
+                        <option value="safety">Safety Incidents</option>
+                    </select>
+                    <select id="chart-period" class="period-selector">
+                        <option value="hour">Last Hour</option>
+                        <option value="day">Last 24 Hours</option>
+                        <option value="week">Last Week</option>
+                    </select>
+                </div>
+                <canvas id="performanceChart" width="400" height="300"></canvas>
+            </div>
+
+            <!-- What-If Analysis Panel -->
+            <div class="card what-if-analysis">
+                <h3>🔮 What-If Scenario Analysis</h3>
+                <div class="scenario-description">
+                    <p>Test different operational scenarios to evaluate impact on throughput and safety</p>
+                </div>
+                <div class="scenario-controls">
+                    <div class="scenario-buttons">
+                        <button class="scenario-btn" data-scenario="reduce_headway" title="Test 3-minute headway">
+                            🚄 Reduce Headway
+                        </button>
+                        <button class="scenario-btn" data-scenario="weather_disruption" title="Simulate weather delays">
+                            🌧️ Weather Impact
+                        </button>
+                        <button class="scenario-btn" data-scenario="add_delay" title="Major delay simulation">
+                            ⏰ Major Delay
+                        </button>
+                        <button class="scenario-btn" data-scenario="emergency" title="Emergency protocol">
+                            🚨 Emergency
+                        </button>
+                    </div>
+                    <div class="custom-scenario">
+                        <input type="number" id="custom-delay" placeholder="Delay (minutes)" min="0" max="60">
+                        <button id="custom-scenario-btn" class="scenario-btn custom">Custom Test</button>
+                    </div>
+                </div>
+                <div id="what-if-result" class="scenario-result">
+                    <div class="scenario-placeholder">
+                        <div class="analysis-icon">📊</div>
+                        <p>Select a scenario to run impact analysis</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Graphical Train Movement Simulation -->
+            <div class="card simulation-panel">
+                <h3>🎮 Train Movement Simulation</h3>
+                <div class="simulation-controls">
+                    <button id="play-simulation" class="sim-btn" title="Play simulation">▶️</button>
+                    <button id="pause-simulation" class="sim-btn" title="Pause simulation">⏸️</button>
+                    <button id="reset-simulation" class="sim-btn" title="Reset simulation">⏹️</button>
+                    <div class="simulation-speed">
+                        <label>Speed: </label>
+                        <select id="simulation-speed-control">
+                            <option value="0.5">0.5x</option>
+                            <option value="1" selected>1x</option>
+                            <option value="2">2x</option>
+                            <option value="5">5x</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="simulation-canvas-container">
+                    <canvas id="simulationCanvas" width="600" height="300"></canvas>
+                    <div class="simulation-legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #27ae60;"></div>
+                            <span>On Time</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #f39c12;"></div>
+                            <span>Delayed</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #e74c3c;"></div>
+                            <span>Critical</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #3498db;"></div>
+                            <span>Optimized</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="simulation-info">
+                    <div class="sim-stat">
+                        <span class="sim-label">Current Time:</span>
+                        <span id="simulation-time" class="sim-value">06:00</span>
+                    </div>
+                    <div class="sim-stat">
+                        <span class="sim-label">Active Trains:</span>
+                        <span id="simulation-active" class="sim-value">0</span>
+                    </div>
+                    <div class="sim-stat">
+                        <span class="sim-label">Throughput:</span>
+                        <span id="simulation-throughput" class="sim-value">0.0/hr</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI System Information -->
+            <div class="card ai-system-info">
+                <h3>🧠 AI System Status</h3>
+                <div class="ai-metrics">
+                    <div class="ai-metric">
+                        <div class="metric-icon">🎯</div>
+                        <div class="metric-info">
+                            <div class="metric-value" id="ml-accuracy">85.2%</div>
+                            <div class="metric-label">Model Accuracy</div>
+                        </div>
+                    </div>
+                    <div class="ai-metric">
+                        <div class="metric-icon">⚡</div>
+                        <div class="metric-info">
+                            <div class="metric-value" id="response-time">2.3s</div>
+                            <div class="metric-label">Avg Response</div>
+                        </div>
+                    </div>
+                    <div class="ai-metric">
+                        <div class="metric-icon">💡</div>
+                        <div class="metric-info">
+                            <div class="metric-value" id="solutions-generated">0</div>
+                            <div class="metric-label">Solutions Today</div>
+                        </div>
+                    </div>
+                    <div class="ai-metric">
+                        <div class="metric-icon">✅</div>
+                        <div class="metric-info">
+                            <div class="metric-value" id="acceptance-rate">87%</div>
+                            <div class="metric-label">Acceptance Rate</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="ai-model-info">
+                    <h4>Active Models</h4>
+                    <div class="model-list">
+                        <div class="model-item">
+                            <span class="model-name">Reason Inference</span>
+                            <span class="model-status active">●</span>
+                        </div>
+                        <div class="model-item">
+                            <span class="model-name">Way Selection</span>
+                            <span class="model-status active">●</span>
+                        </div>
+                        <div class="model-item">
+                            <span class="model-name">CP-SAT Optimizer</span>
+                            <span class="model-status active">●</span>
+                        </div>
+                        <div class="model-item">
+                            <span class="model-name">Safety Validator</span>
+                            <span class="model-status active">●</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Recommendations -->
+            <div class="card recommendations-panel">
+                <h3>💡 System Recommendations</h3>
+                <div id="recommendations-list" class="recommendations-container">
+                    <div class="recommendation-item">
+                        <div class="rec-icon">🔄</div>
+                        <div class="rec-content">
+                            <div class="rec-text">System initializing...</div>
+                            <div class="rec-priority low">Low Priority</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="dashboard-footer">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <strong>VyuhMitra v2.0</strong> | AI-Powered Train Traffic Control
+                </div>
+                <div class="footer-section">
+                    Smart India Hackathon 2024 | Ministry of Railways
+                </div>
+                <div class="footer-section">
+                    <span id="system-uptime">Uptime: --:--:--</span>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Modal for Solution Details -->
+    <div id="solution-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Solution Details</h3>
+                <span class="close-modal">&times;</span>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Solution details will be populated here -->
+            </div>
+            <div class="modal-footer">
+                <button id="modal-accept" class="accept-btn">✅ Accept Solution</button>
+                <button id="modal-reject" class="reject-btn">❌ Reject Solution</button>
+                <button id="modal-close" class="cancel-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="js/dashboard.js"></script>
+</body>
+</html>

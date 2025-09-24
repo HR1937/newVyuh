@@ -1,0 +1,58 @@
+[
+  {
+    "train_id": "12345",
+    "train_name": "Gooty Express",
+    "route": "main",
+    "track": "1",
+    "from_station": "GY",
+    "to_station": "GTL",
+    "scheduled_departure": "06:00",
+    "scheduled_arrival": "07:00",
+    "distance_km": 45,
+    "platform": "1",
+    "last_updated": "2025-09-24T12:00:00Z",
+    "status": "scheduled"
+  },
+  {
+    "train_id": "12346",
+    "train_name": "Guntakal Passenger",
+    "route": "main",
+    "track": "2",
+    "from_station": "GY",
+    "to_station": "GTL",
+    "scheduled_departure": "08:00",
+    "scheduled_arrival": "09:00",
+    "distance_km": 45,
+    "platform": "2",
+    "last_updated": "2025-09-24T12:00:00Z",
+    "status": "scheduled"
+  },
+  {
+    "train_id": "12347",
+    "train_name": "Southern Express",
+    "route": "main",
+    "track": "1",
+    "from_station": "GY",
+    "to_station": "GTL",
+    "scheduled_departure": "10:00",
+    "scheduled_arrival": "11:00",
+    "distance_km": 45,
+    "platform": "1",
+    "last_updated": "2025-09-24T12:00:00Z",
+    "status": "scheduled"
+  },
+  {
+    "train_id": "12348",
+    "train_name": "Fast Passenger",
+    "route": "main",
+    "track": "3",
+    "from_station": "GY",
+    "to_station": "GTL",
+    "scheduled_departure": "12:00",
+    "scheduled_arrival": "12:45",
+    "distance_km": 45,
+    "platform": "3",
+    "last_updated": "2025-09-24T12:00:00Z",
+    "status": "scheduled"
+  }
+]

@@ -1,0 +1,35 @@
+# VyuhMitra - AI-Powered Train Traffic Control System
+# Core Dependencies
+
+# API and HTTP
+requests==2.31.0
+flask==2.3.3
+flask-cors==4.0.0
+
+# Optimization and AI/ML
+ortools==9.7.2996
+scikit-learn==1.3.0
+numpy==1.24.3
+
+# Data Processing
+pandas==2.0.3
+python-dateutil==2.8.2
+
+# Additional utilities
+uuid
+logging
+json
+os
+datetime
+typing
+argparse
+
+
+
+
+
+
+
+
+
+
