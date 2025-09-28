@@ -333,3 +333,330 @@ class TrainScheduleOptimizer:
         ways = ['change_track', 'speed_adjustment']  # Based on scenario
         solutions = self.optimize_scenario(scenario, trains, ways)
         return solutions  # With KPI impact
+
+    def __init__(self, min_headway_minutes: int = 5):
+        self.min_headway = min_headway_minutes
+        self.logger = self._setup_logger()
+
+    def _setup_logger(self):
+        logger = logging.getLogger('Optimizer')
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('[OPT] %(asctime)s - %(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        return logger
+
+    def optimize_section_schedule(self, static_schedules: Dict, scenario: str = 'default') -> Dict:
+        """
+        FIXED: Optimize train schedules using CP-SAT with proper constraint handling
+        """
+        try:
+            self.logger.info(f"Starting schedule optimization (scenario: {scenario})")
+
+            if not static_schedules:
+                return {
+                    "status": "no_data",
+                    "message": "No schedules provided for optimization",
+                    "throughput": 0
+                }
+
+            # Create CP-SAT model
+            model = cp_model.CpModel()
+            solver = cp_model.CpSolver()
+            solver.parameters.max_time_in_seconds = 30
+
+            trains = list(static_schedules.keys())
+            train_vars = {}
+            deviation_vars = {}
+            throughput_vars = {}
+
+            # Create variables for each train
+            for train_id in trains:
+                original_time = static_schedules[train_id].get('entry_time', 360)  # 6:00 AM default
+
+                # Schedule adjustment variable (deviation in minutes)
+                deviation_vars[train_id] = model.NewIntVar(
+                    -60, 60, f'deviation_{train_id}'
+                )
+
+                # Adjusted schedule time
+                train_vars[train_id] = model.NewIntVar(
+                    max(0, original_time - 60),
+                    original_time + 60,
+                    f'adjusted_time_{train_id}'
+                )
+
+                # FIXED: Use proper constraint instead of BoundedLinearExpression
+                model.Add(train_vars[train_id] == original_time + deviation_vars[train_id])
+
+                # Throughput contribution variable
+                throughput_vars[train_id] = model.NewIntVar(0, 100, f'throughput_{train_id}')
+
+            # FIXED: Safety constraints - minimum headway between consecutive trains
+            sorted_trains = sorted(trains, key=lambda t: static_schedules[t].get('entry_time', 360))
+
+            for i in range(len(sorted_trains) - 1):
+                train1 = sorted_trains[i]
+                train2 = sorted_trains[i + 1]
+
+                # FIXED: Proper headway constraint using boolean variables
+                headway_satisfied = model.NewBoolVar(f'headway_{train1}_{train2}')
+
+                # Ensure minimum headway between trains
+                headway_diff = train_vars[train2] - train_vars[train1]
+
+                # FIXED: Use OnlyEnforceIf instead of direct boolean evaluation
+                model.Add(headway_diff >= self.min_headway).OnlyEnforceIf(headway_satisfied)
+                model.Add(headway_diff >= self.min_headway)  # Always enforce minimum headway
+
+            # Scenario-specific constraints
+            if scenario == 'reduce_headway':
+                # Try to reduce headway while maintaining safety
+                for i, train_id in enumerate(trains):
+                    if i > 0:
+                        prev_train = trains[i - 1]
+                        # Encourage tighter scheduling
+                        model.Add(deviation_vars[train_id] >= -30)
+                        model.Add(deviation_vars[train_id] <= 30)
+
+            elif scenario == 'maximize_throughput':
+                # Maximize throughput by optimizing train spacing
+                total_throughput = model.NewIntVar(0, len(trains) * 100, 'total_throughput')
+                model.Add(total_throughput == sum(throughput_vars.values()))
+
+                # Set throughput based on headway efficiency
+                for i, train_id in enumerate(trains):
+                    if i > 0:
+                        prev_train = trains[i - 1]
+                        # Better throughput for efficient headway
+                        model.Add(throughput_vars[train_id] >= 70)
+                    else:
+                        model.Add(throughput_vars[train_id] >= 80)
+
+                model.Maximize(total_throughput)
+
+            elif scenario == 'minimize_delay':
+                # Minimize total deviation from original schedule
+                total_deviation = model.NewIntVar(
+                    -len(trains) * 60,
+                    len(trains) * 60,
+                    'total_deviation'
+                )
+                model.Add(total_deviation == sum(deviation_vars.values()))
+
+                # Minimize absolute deviation
+                abs_deviation_vars = {}
+                for train_id in trains:
+                    abs_dev = model.NewIntVar(0, 60, f'abs_dev_{train_id}')
+                    abs_deviation_vars[train_id] = abs_dev
+
+                    # FIXED: Absolute value constraints using boolean variables
+                    is_positive = model.NewBoolVar(f'pos_{train_id}')
+                    model.Add(deviation_vars[train_id] >= 0).OnlyEnforceIf(is_positive)
+                    model.Add(deviation_vars[train_id] < 0).OnlyEnforceIf(is_positive.Not())
+
+                    model.Add(abs_dev == deviation_vars[train_id]).OnlyEnforceIf(is_positive)
+                    model.Add(abs_dev == -deviation_vars[train_id]).OnlyEnforceIf(is_positive.Not())
+
+                model.Minimize(sum(abs_deviation_vars.values()))
+
+            else:  # default scenario
+                # Balanced optimization: minimize deviation while maximizing efficiency
+                total_throughput = model.NewIntVar(0, len(trains) * 100, 'total_throughput')
+                model.Add(total_throughput == sum(throughput_vars.values()))
+
+                total_abs_deviation = model.NewIntVar(0, len(trains) * 60, 'total_abs_dev')
+
+                # Calculate total absolute deviation
+                abs_vars = []
+                for train_id in trains:
+                    abs_dev = model.NewIntVar(0, 60, f'abs_dev_{train_id}')
+                    is_positive = model.NewBoolVar(f'pos_{train_id}')
+
+                    model.Add(deviation_vars[train_id] >= 0).OnlyEnforceIf(is_positive)
+                    model.Add(deviation_vars[train_id] < 0).OnlyEnforceIf(is_positive.Not())
+                    model.Add(abs_dev == deviation_vars[train_id]).OnlyEnforceIf(is_positive)
+                    model.Add(abs_dev == -deviation_vars[train_id]).OnlyEnforceIf(is_positive.Not())
+
+                    abs_vars.append(abs_dev)
+
+                model.Add(total_abs_deviation == sum(abs_vars))
+
+                # Objective: maximize throughput while minimizing deviation
+                objective = total_throughput * 10 - total_abs_deviation
+                model.Maximize(objective)
+
+            # Solve the model
+            status = solver.Solve(model)
+
+            if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                # Extract solution
+                optimized_schedules = {}
+                total_deviation = 0
+                trains_adjusted = 0
+
+                for train_id in trains:
+                    original_time = static_schedules[train_id].get('entry_time', 360)
+                    deviation = solver.Value(deviation_vars[train_id])
+                    adjusted_time = solver.Value(train_vars[train_id])
+
+                    if abs(deviation) > 0:
+                        trains_adjusted += 1
+
+                    total_deviation += abs(deviation)
+
+                    optimized_schedules[train_id] = {
+                        **static_schedules[train_id],
+                        'optimized_entry_time': adjusted_time,
+                        'deviation_minutes': deviation,
+                        'throughput_score': solver.Value(
+                            throughput_vars[train_id]) if train_id in throughput_vars else 75
+                    }
+
+                # Calculate throughput (trains per hour)
+                if trains:
+                    time_span_hours = (max(solver.Value(train_vars[t]) for t in trains) -
+                                       min(solver.Value(train_vars[t]) for t in trains)) / 60
+                    throughput = len(trains) / max(time_span_hours, 1)
+                else:
+                    throughput = 0
+
+                result = {
+                    "status": solver.StatusName(status).lower(),
+                    "optimized_schedules": optimized_schedules,
+                    "trains_adjusted": trains_adjusted,
+                    "total_deviation_minutes": total_deviation,
+                    "throughput": round(throughput, 2),
+                    "objective_value": solver.ObjectiveValue(),
+                    "solve_time_seconds": solver.WallTime(),
+                    "scenario": scenario
+                }
+
+                self.logger.info(
+                    f"Optimization successful: {trains_adjusted} trains adjusted, throughput: {throughput:.2f}")
+                return result
+
+            else:
+                self.logger.error(f"Optimization failed: {solver.StatusName(status)}")
+                return {
+                    "status": "failed",
+                    "error": f"Solver status: {solver.StatusName(status)}",
+                    "throughput": 0,
+                    "scenario": scenario
+                }
+
+        except Exception as e:
+            self.logger.error(f"Optimization error: {str(e)}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "throughput": 0,
+                "scenario": scenario
+            }
+
+    def analyze_headway_feasibility(self, static_schedules: Dict) -> Dict:
+        """Analyze current headway between trains"""
+        try:
+            if not static_schedules:
+                return {"feasible": True, "issues": []}
+
+            trains = sorted(static_schedules.keys(),
+                            key=lambda t: static_schedules[t].get('entry_time', 360))
+
+            issues = []
+
+            for i in range(len(trains) - 1):
+                train1 = trains[i]
+                train2 = trains[i + 1]
+
+                time1 = static_schedules[train1].get('entry_time', 360)
+                time2 = static_schedules[train2].get('entry_time', 360)
+
+                headway = time2 - time1
+
+                if headway < self.min_headway:
+                    issues.append({
+                        "trains": [train1, train2],
+                        "current_headway": headway,
+                        "required_headway": self.min_headway,
+                        "adjustment_needed": self.min_headway - headway
+                    })
+
+            return {
+                "feasible": len(issues) == 0,
+                "issues": issues,
+                "total_issues": len(issues)
+            }
+
+        except Exception as e:
+            self.logger.error(f"Headway analysis error: {e}")
+            return {"feasible": False, "error": str(e)}
+
+    def generate_what_if_scenarios(self, static_schedules: Dict) -> Dict:
+        """Generate multiple what-if scenarios for comparison"""
+        try:
+            scenarios = ['default', 'reduce_headway', 'maximize_throughput', 'minimize_delay']
+            results = {}
+
+            for scenario in scenarios:
+                self.logger.info(f"Running what-if scenario: {scenario}")
+                result = self.optimize_section_schedule(static_schedules, scenario)
+                results[scenario] = result
+
+            # Compare scenarios
+            comparison = self._compare_scenarios(results)
+
+            return {
+                "scenario_results": results,
+                "comparison": comparison,
+                "recommendation": self._recommend_best_scenario(results)
+            }
+
+        except Exception as e:
+            self.logger.error(f"What-if analysis error: {e}")
+            return {"error": str(e)}
+
+    def _compare_scenarios(self, results: Dict) -> Dict:
+        """Compare different optimization scenarios"""
+        comparison = {}
+
+        for scenario, result in results.items():
+            if result.get("status") in ["optimal", "feasible"]:
+                comparison[scenario] = {
+                    "throughput": result.get("throughput", 0),
+                    "trains_adjusted": result.get("trains_adjusted", 0),
+                    "total_deviation": result.get("total_deviation_minutes", 0),
+                    "solve_time": result.get("solve_time_seconds", 0)
+                }
+
+        return comparison
+
+    def _recommend_best_scenario(self, results: Dict) -> Dict:
+        """Recommend the best scenario based on multiple criteria"""
+        valid_results = {k: v for k, v in results.items()
+                         if v.get("status") in ["optimal", "feasible"]}
+
+        if not valid_results:
+            return {"scenario": "none", "reason": "No valid optimization results"}
+
+        # Score each scenario (higher is better)
+        scores = {}
+        for scenario, result in valid_results.items():
+            throughput = result.get("throughput", 0)
+            deviation = result.get("total_deviation_minutes", 999)
+            trains_adjusted = result.get("trains_adjusted", 0)
+
+            # Scoring formula: prioritize throughput, minimize deviation and disruption
+            score = (throughput * 10) - (deviation * 0.5) - (trains_adjusted * 2)
+            scores[scenario] = score
+
+        best_scenario = max(scores.keys(), key=lambda k: scores[k])
+
+        return {
+            "scenario": best_scenario,
+            "score": scores[best_scenario],
+            "reason": f"Best balance of throughput ({valid_results[best_scenario]['throughput']:.2f}) and minimal disruption",
+            "all_scores": scores
+        }

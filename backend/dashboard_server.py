@@ -31,7 +31,7 @@ config = Config()
 data_collector = RailRadarDataCollector(config.RAILRADAR_API_KEY)
 ai_system = AIMLSolutionSystem(config)
 optimizer = TrainScheduleOptimizer(config.MIN_HEADWAY_MINUTES)
-kpi_calculator = KPICalculator()
+kpi_calculator = KPICalculator(logger)
 
 # Global state
 current_section_data = None

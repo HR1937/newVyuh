@@ -1,12 +1,14 @@
 from typing import Dict, List
+from typing import Dict, Any
 import json
 from datetime import datetime, timedelta
 import statistics
 import logging
 
+
 class KPICalculator:
-    def __init__(self):
-        self.logger = self._setup_logger()
+    def __init__(self, logger):
+        self.logger = logger
         self.kpi_history = []
 
     def compute_current(self, section_data: Dict[str, Any]) -> Dict[str, Any]:
