@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-VyuhMitra Dashboard Server - Enhanced with complete AI/ML workflow
-Updated to serve frontend files from the proper directory structure
-"""
 
 import json
 import os
@@ -11,35 +7,29 @@ from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from flask_cors import CORS
 
-# Import our modules
 from .config import Config
 from .data_collector import RailRadarDataCollector
 from .ai_solution_system import AIMLSolutionSystem
 from .optimizer import TrainScheduleOptimizer
 from .kpi_calculator import KPICalculator
 
-# Initialize Flask app
 app = Flask(__name__)
 CORS(app)
 
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('DashboardServer')
 
-# Initialize components
 config = Config()
 data_collector = RailRadarDataCollector(config.RAILRADAR_API_KEY)
 ai_system = AIMLSolutionSystem(config)
 optimizer = TrainScheduleOptimizer(config.MIN_HEADWAY_MINUTES)
 kpi_calculator = KPICalculator(logger)
 
-# Global state
 current_section_data = None
 current_abnormalities = []
 active_solutions = []
 
 def create_api_response(success: bool, data=None, error=None) -> dict:
-    """Create standardized API response"""
     return {
         "success": success,
         "data": data,
@@ -47,13 +37,10 @@ def create_api_response(success: bool, data=None, error=None) -> dict:
         "timestamp": datetime.now().isoformat()
     }
 
-# =================== FRONTEND FILE SERVING ===================
-# Project root directory
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 @app.route('/')
 def dashboard():
-    """Serve the main dashboard HTML from frontend directory"""
     try:
         return send_file(os.path.join(PROJECT_ROOT, 'frontend', 'index.html'))
     except Exception as e:
@@ -62,7 +49,6 @@ def dashboard():
 
 @app.route('/css/<path:filename>')
 def serve_css(filename):
-    """Serve CSS files from frontend/css directory"""
     try:
         return send_from_directory(os.path.join(PROJECT_ROOT, 'frontend', 'css'), filename, mimetype='text/css')
     except Exception as e:
@@ -71,7 +57,6 @@ def serve_css(filename):
 
 @app.route('/js/<path:filename>')
 def serve_js(filename):
-    """Serve JavaScript files from frontend/js directory"""
     try:
         return send_from_directory(os.path.join(PROJECT_ROOT, 'frontend', 'js'), filename, mimetype='application/javascript')
     except Exception as e:
@@ -80,9 +65,7 @@ def serve_js(filename):
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
-    """Serve static files for backwards compatibility"""
     try:
-        # Try frontend directory first
         if filename.startswith('css/'):
             return send_from_directory('frontend', filename, mimetype='text/css')
         elif filename.startswith('js/'):
@@ -93,45 +76,77 @@ def serve_static(filename):
         logger.error(f"Error serving static file {filename}: {e}")
         return f"Static file not found: {filename}", 404
 
-# =================== CORE DATA ENDPOINTS ===================
-
 @app.route('/api/section/current')
 def get_current_section():
-    """Get current section data with abnormality detection"""
     global current_section_data, current_abnormalities
 
     try:
         from_station = config.DEFAULT_FROM_STATION
         to_station = config.DEFAULT_TO_STATION
 
-        # Collect fresh data
+        logger.info(f"Fetching section data for {from_station}-{to_station}")
         section_data = data_collector.collect_section_data(from_station, to_station)
+        
+        if not section_data or not section_data.get("valid_schedules"):
+            logger.warning("No valid section data received, using fallback data")
+            # Create fallback data if no valid data is available
+            section_data = {
+                "section": f"{from_station}-{to_station}",
+                "from_station": from_station,
+                "to_station": to_station,
+                "static_schedules": {},
+                "valid_schedules": 0,
+                "abnormalities": [],
+                "timestamp": datetime.now().isoformat(),
+                "data_source": "fallback"
+            }
+        
+        logger.info(f"Section data received with {section_data.get('valid_schedules', 0)} valid schedules")
         current_section_data = section_data
         current_abnormalities = section_data.get("abnormalities", [])
+        
+        logger.info(f"Found {len(current_abnormalities)} abnormalities")
 
-        # Enhanced section data
         enhanced_data = {
             **section_data,
             "abnormalities_count": len(current_abnormalities),
             "active_solutions_count": len(active_solutions),
-            "system_status": "operational" if section_data["valid_schedules"] > 0 else "limited_data"
+            "system_status": "operational" if section_data.get("valid_schedules", 0) > 0 else "limited_data"
         }
 
         return jsonify(create_api_response(True, enhanced_data))
 
     except Exception as e:
         logger.error(f"Error getting section data: {e}")
-        return jsonify(create_api_response(False, error=str(e))), 500
+        # Return a minimal fallback response even in case of error
+        fallback_data = {
+            "section": f"{config.DEFAULT_FROM_STATION}-{config.DEFAULT_TO_STATION}",
+            "from_station": config.DEFAULT_FROM_STATION,
+            "to_station": config.DEFAULT_TO_STATION,
+            "static_schedules": {},
+            "valid_schedules": 0,
+            "abnormalities": [],
+            "abnormalities_count": 0,
+            "active_solutions_count": 0,
+            "system_status": "error",
+            "timestamp": datetime.now().isoformat(),
+            "data_source": "error_fallback",
+            "error_details": str(e)
+        }
+        return jsonify(create_api_response(True, fallback_data))
 
 @app.route('/api/abnormalities')
 def get_abnormalities():
-    """Get current abnormalities"""
     try:
-        # Force refresh of section data to get latest abnormalities
+        logger.info("Fetching abnormalities data")
         if not current_section_data:
+            logger.info("No current section data, fetching fresh data")
             section_data = data_collector.collect_section_data(config.DEFAULT_FROM_STATION, config.DEFAULT_TO_STATION)
             globals()['current_section_data'] = section_data
             globals()['current_abnormalities'] = section_data.get("abnormalities", [])
+            logger.info(f"Fetched {len(current_abnormalities)} abnormalities from fresh data")
+        else:
+            logger.info(f"Using existing abnormalities data with {len(current_abnormalities)} items")
 
         return jsonify(create_api_response(True, {
             "abnormalities": current_abnormalities,
@@ -140,13 +155,16 @@ def get_abnormalities():
         }))
     except Exception as e:
         logger.error(f"Error getting abnormalities: {e}")
-        return jsonify(create_api_response(False, error=str(e))), 500
-
-# =================== AI/ML SOLUTION ENDPOINTS ===================
+        # Return empty abnormalities list instead of error
+        return jsonify(create_api_response(True, {
+            "abnormalities": [],
+            "count": 0,
+            "last_checked": datetime.now().isoformat(),
+            "error_details": str(e)
+        }))
 
 @app.route('/api/solutions/generate', methods=['POST'])
 def generate_solutions():
-    """Generate solutions for an abnormality"""
     global active_solutions
 
     try:
@@ -156,11 +174,9 @@ def generate_solutions():
 
         logger.info(f"Processing abnormality for train {abnormality.get('train_id', 'unknown')}")
 
-        # Process abnormality through AI system
         result = ai_system.process_abnormality(abnormality)
 
         if result["status"] == "solutions_generated":
-            # Store active solutions
             new_solutions = result["solutions"]
             active_solutions.extend(new_solutions)
 
@@ -183,7 +199,6 @@ def generate_solutions():
 
 @app.route('/api/solutions/active')
 def get_active_solutions():
-    """Get currently active solutions awaiting controller decision"""
     try:
         return jsonify(create_api_response(True, {
             "solutions": active_solutions,
@@ -195,7 +210,6 @@ def get_active_solutions():
 
 @app.route('/api/solutions/feedback', methods=['POST'])
 def submit_solution_feedback():
-    """Handle accept/reject feedback from controller"""
     global active_solutions
 
     try:
@@ -207,7 +221,6 @@ def submit_solution_feedback():
 
         logger.info(f"Processing {feedback_data['action']} for solution {feedback_data['solution_id']}")
 
-        # Process feedback through AI system
         result = ai_system.handle_solution_feedback(
             feedback_data['solution_id'],
             feedback_data['action'],
@@ -216,7 +229,6 @@ def submit_solution_feedback():
             feedback_data.get('controller_id', 'dashboard_user')
         )
 
-        # Remove solution from active list
         active_solutions = [s for s in active_solutions if s['solution_id'] != feedback_data['solution_id']]
 
         logger.info(f"Solution {feedback_data['action']} processed successfully")
@@ -227,21 +239,16 @@ def submit_solution_feedback():
         logger.error(f"Error processing feedback: {e}")
         return jsonify(create_api_response(False, error=str(e))), 500
 
-# =================== OPTIMIZATION ENDPOINTS ===================
-
 @app.route('/api/optimize/current')
 def run_optimization():
-    """Run schedule optimization"""
     try:
         if not current_section_data or not current_section_data.get("static_schedules"):
-            # Try to collect data first
             section_data = data_collector.collect_section_data(config.DEFAULT_FROM_STATION, config.DEFAULT_TO_STATION)
             globals()['current_section_data'] = section_data
 
             if not section_data.get("static_schedules"):
                 return jsonify(create_api_response(False, error="No section data available for optimization"))
 
-        # Run optimization
         static_schedules = current_section_data["static_schedules"]
         optimization_result = optimizer.optimize_section_schedule(static_schedules, scenario='default')
 
@@ -256,10 +263,8 @@ def run_optimization():
         logger.error(f"Optimization error: {e}")
         return jsonify(create_api_response(False, error=str(e))), 500
 
-
 @app.route('/api/optimize/scenario', methods=['POST'])
-def run_scenario_optimization(self, section: str, scenario: str):
-    """Run what-if scenario optimization"""
+def run_scenario_optimization():
     try:
         scenario_data = request.json or {}
         scenario = scenario_data.get('scenario', 'default')
@@ -267,16 +272,13 @@ def run_scenario_optimization(self, section: str, scenario: str):
         logger.info(f"Running what-if scenario: {scenario}")
 
         if not current_section_data:
-            # Collect fresh data
             section_data = data_collector.collect_section_data(config.DEFAULT_FROM_STATION, config.DEFAULT_TO_STATION)
             globals()['current_section_data'] = section_data
 
         static_schedules = current_section_data.get("static_schedules", {})
-        historical_abnormalities = section_data.get('abnormalities', [])  # Includes predicted
-        optimization_result = optimizer.optimize_section_schedule(static_schedules, scenario=scenario,
-                                                                  historical_abnormalities=historical_abnormalities)
+
         if not static_schedules:
-            return jsonify(create_api_response(True, {  # success True with message
+            return jsonify(create_api_response(True, {
                 "scenario": scenario,
                 "optimization_result": {"status": "no_data", "message": "No schedule data available for scenario analysis"},
                 "comparison": {}
@@ -307,12 +309,8 @@ def run_scenario_optimization(self, section: str, scenario: str):
             "comparison": {}
         })), 200
 
-
-# =================== KPI ENDPOINTS ===================
-
 @app.route('/api/kpi/current')
 def get_current_kpis():
-    """Calculate and return current KPIs"""
     try:
         if not current_section_data:
             try:
@@ -320,7 +318,6 @@ def get_current_kpis():
                 globals()['current_section_data'] = section_data
             except Exception as e:
                 logger.warning(f"KPI: data collection failed: {e}")
-                # Return safe zeroed KPIs with success True
                 kpi_data = {
                     "section": f"{config.DEFAULT_FROM_STATION}-{config.DEFAULT_TO_STATION}",
                     "timestamp": datetime.now().isoformat(),
@@ -338,7 +335,6 @@ def get_current_kpis():
 
         section_data = current_section_data
 
-        # Try optimizer but don't fail if it errors
         optimization_result = {}
         try:
             static_schedules = section_data.get("static_schedules", {})
@@ -372,9 +368,7 @@ def get_current_kpis():
 
 @app.route('/api/kpi/historical')
 def get_historical_kpis():
-    """Get historical KPI trends"""
     try:
-        # Generate sample historical data (in production, this would load from database)
         dates = [(datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
 
         historical_data = {
@@ -391,35 +385,48 @@ def get_historical_kpis():
         logger.error(f"Historical KPI error: {e}")
         return jsonify(create_api_response(False, error=str(e))), 500
 
-# =================== DASHBOARD SUMMARY ENDPOINTS ===================
-
 @app.route('/api/dashboard/summary')
 def get_dashboard_summary():
-    """Get comprehensive dashboard summary"""
     try:
+        logger.info("🔍 [DEBUG] Dashboard summary requested")
+        
         if not current_section_data:
-            # Try to collect data first
+            logger.info("🔍 [DEBUG] No current section data, collecting fresh data...")
             try:
+                logger.info(f"🔍 [DEBUG] Collecting data for section {config.DEFAULT_FROM_STATION}-{config.DEFAULT_TO_STATION}")
                 section_data = data_collector.collect_section_data(config.DEFAULT_FROM_STATION, config.DEFAULT_TO_STATION)
+                logger.info(f"🔍 [DEBUG] Data collection result: {section_data.get('data_source', 'unknown')}")
+                logger.info(f"🔍 [DEBUG] Total trains: {section_data.get('total_trains', 0)}")
+                logger.info(f"🔍 [DEBUG] Live data entries: {section_data.get('live_entry_count', 0)}")
+                logger.info(f"🔍 [DEBUG] Abnormalities: {len(section_data.get('abnormalities', []))}")
+                
                 globals()['current_section_data'] = section_data
                 globals()['current_abnormalities'] = section_data.get("abnormalities", [])
+                logger.info("🔍 [DEBUG] Section data stored in global variables")
             except Exception as e:
-                logger.warning(f"Failed to collect live data, using fallback: {e}")
-                # Use fallback data for demo
-                section_data = create_fallback_data()
+                logger.error(f"🔍 [DEBUG] Failed to collect live data: {e}")
+                import traceback
+                logger.error(f"🔍 [DEBUG] Full traceback: {traceback.format_exc()}")
+                logger.warning(f"Failed to collect live data; returning empty summary (no demo data)")
+                section_data = {
+                    "section": f"{config.DEFAULT_FROM_STATION}-{config.DEFAULT_TO_STATION}",
+                    "timestamp": datetime.now().isoformat(),
+                    "valid_schedules": 0,
+                    "static_schedules": {},
+                    "abnormalities": [],
+                    "data_source": "error"
+                }
                 globals()['current_section_data'] = section_data
                 globals()['current_abnormalities'] = section_data.get("abnormalities", [])
         else:
+            logger.info("🔍 [DEBUG] Using existing section data")
             section_data = current_section_data
 
-        # Calculate basic metrics
         total_trains = section_data.get("valid_schedules", 0)
         abnormalities_count = len(section_data.get("abnormalities", []))
 
-        # Get AI system stats
         ai_stats = ai_system.get_system_stats()
 
-        # Calculate performance metrics
         static_schedules = section_data.get("static_schedules", {})
         optimization_result = {}
 
@@ -429,16 +436,13 @@ def get_dashboard_summary():
             except Exception as e:
                 logger.warning(f"Optimization failed in summary: {e}")
 
-        # Calculate efficiency metrics
         planned_throughput = 0
         efficiency_score = 50
         efficiency_grade = "C"
 
         if total_trains > 0:
-            # Simple throughput calculation
             planned_throughput = total_trains / 24 if total_trains > 0 else 0
 
-            # Simple efficiency calculation based on trains and abnormalities
             if abnormalities_count == 0:
                 efficiency_score = 85 if total_trains > 5 else 70
                 efficiency_grade = "A" if total_trains > 5 else "B"
@@ -459,7 +463,7 @@ def get_dashboard_summary():
             "abnormalities": {
                 "current_count": abnormalities_count,
                 "active_solutions": len(active_solutions),
-                "resolved_today": 0  # Would track from database
+                "resolved_today": 0
             },
             "performance_metrics": {
                 "planned_throughput": planned_throughput,
@@ -474,7 +478,7 @@ def get_dashboard_summary():
             "live_status": {
                 "data_quality": section_data.get("data_quality", {}),
                 "last_update": section_data.get("timestamp", datetime.now().isoformat()),
-                "activity_ratio": 0.5  # Simplified calculation
+                "activity_ratio": 0.5
             },
             "ai_system": ai_stats,
             "system_health": "Good" if total_trains > 0 else "Limited Data",
@@ -492,7 +496,6 @@ def get_dashboard_summary():
         return jsonify(create_api_response(False, error=str(e))), 500
 
 def create_fallback_data():
-    """Create fallback demo data when API is unavailable"""
     return {
         "section": f"{config.DEFAULT_FROM_STATION}-{config.DEFAULT_TO_STATION}",
         "timestamp": datetime.now().isoformat(),
@@ -501,22 +504,22 @@ def create_fallback_data():
         "static_schedules": {
             "12345": {
                 "train_name": "Gooty Express",
-                "entry_time": 360,  # 6:00 AM
-                "exit_time": 420,   # 7:00 AM
+                "entry_time": 360,
+                "exit_time": 420,
                 "entry_platform": "1",
                 "journey_date": datetime.now().strftime("%Y-%m-%d")
             },
             "12346": {
                 "train_name": "Guntakal Passenger",
-                "entry_time": 480,  # 8:00 AM
-                "exit_time": 540,   # 9:00 AM
+                "entry_time": 480,
+                "exit_time": 540,
                 "entry_platform": "2",
                 "journey_date": datetime.now().strftime("%Y-%m-%d")
             },
             "12347": {
                 "train_name": "Southern Express",
-                "entry_time": 600,  # 10:00 AM
-                "exit_time": 660,   # 11:00 AM
+                "entry_time": 600,
+                "exit_time": 660,
                 "entry_platform": "1",
                 "journey_date": datetime.now().strftime("%Y-%m-%d")
             }
@@ -541,18 +544,32 @@ def create_fallback_data():
 
 @app.route('/api/trains/schedule')
 def get_train_schedules():
-    """Get formatted train schedule data for dashboard"""
     try:
+        logger.info("🔍 [DEBUG] Train schedule endpoint requested")
+        
         if not current_section_data or not current_section_data.get("static_schedules"):
-            # Try to get fresh data
+            logger.info("🔍 [DEBUG] No current section data for schedules, collecting fresh data...")
             try:
                 section_data = data_collector.collect_section_data(config.DEFAULT_FROM_STATION, config.DEFAULT_TO_STATION)
+                logger.info(f"🔍 [DEBUG] Schedule data collection result: {section_data.get('data_source', 'unknown')}")
+                logger.info(f"🔍 [DEBUG] Static schedules count: {len(section_data.get('static_schedules', {}))}")
+                logger.info(f"🔍 [DEBUG] Live data count: {len(section_data.get('live_data', {}))}")
                 globals()['current_section_data'] = section_data
-            except:
-                # Use fallback data
-                section_data = create_fallback_data()
+            except Exception as e:
+                logger.error(f"🔍 [DEBUG] Schedule data collection failed: {e}")
+                # Return an empty schedule payload (no demo data)
+                section_data = {
+                    "section": f"{config.DEFAULT_FROM_STATION}-{config.DEFAULT_TO_STATION}",
+                    "timestamp": datetime.now().isoformat(),
+                    "static_schedules": {},
+                    "valid_schedules": 0,
+                    "live_data": {},
+                    "abnormalities": [],
+                    "data_source": "error"
+                }
                 globals()['current_section_data'] = section_data
         else:
+            logger.info("🔍 [DEBUG] Using existing section data for schedules")
             section_data = current_section_data
 
         static_schedules = section_data.get("static_schedules", {})
@@ -570,9 +587,9 @@ def get_train_schedules():
                 "train_name": schedule.get("train_name", "Unknown"),
                 "static_entry": schedule.get("entry_time", 0),
                 "static_exit": schedule.get("exit_time", 0),
-                "optimized_entry": schedule.get("entry_time", 0),  # Would be from optimization
+                "optimized_entry": schedule.get("entry_time", 0),
                 "optimized_exit": schedule.get("exit_time", 0),
-                "deviation": 0,  # Calculated from optimization
+                "deviation": 0,
                 "platform": schedule.get("entry_platform", "TBD"),
                 "status": "Live" if live_info else "Scheduled",
                 "delay_minutes": live_info.get("overallDelayMinutes", 0) if live_info else 0,
@@ -581,8 +598,11 @@ def get_train_schedules():
             }
             schedule_list.append(schedule_item)
 
-        # Sort by entry time
         schedule_list.sort(key=lambda x: x["static_entry"])
+
+        logger.info(f"🔍 [DEBUG] Returning {len(schedule_list)} train schedules")
+        for i, schedule in enumerate(schedule_list[:3]):  # Show first 3
+            logger.info(f"🔍 [DEBUG] Train {i+1}: {schedule['train_id']} - {schedule['train_name']} - Status: {schedule['status']} - Delay: {schedule['delay_minutes']}min")
 
         return jsonify(create_api_response(True, {"schedule_data": schedule_list}))
 
@@ -590,22 +610,19 @@ def get_train_schedules():
         logger.error(f"Schedule data error: {e}")
         return jsonify(create_api_response(False, error=str(e))), 500
 
-# =================== SYSTEM ENDPOINTS ===================
-
 @app.route('/api/system/status')
 def get_system_status():
-    """Get overall system status"""
     try:
         status = {
             "api_status": "online",
-            "railradar_connection": "connected",  # Would test actual connection
+            "railradar_connection": "connected",
             "ml_model_status": "loaded",
             "optimization_engine": "ready",
             "database_status": "connected",
             "frontend_status": "loaded",
             "last_health_check": datetime.now().isoformat(),
             "version": "2.0",
-            "uptime_seconds": 0  # Would calculate actual uptime
+            "uptime_seconds": 0
         }
 
         return jsonify(create_api_response(True, status))
@@ -616,17 +633,14 @@ def get_system_status():
 
 @app.route('/api/system/refresh', methods=['POST'])
 def refresh_system_data():
-    """Force refresh of all system data"""
     global current_section_data, current_abnormalities, active_solutions
 
     try:
         logger.info("Forcing system data refresh...")
 
-        # Clear current data
         current_section_data = None
         current_abnormalities = []
 
-        # Refresh section data
         section_data = data_collector.collect_section_data(config.DEFAULT_FROM_STATION, config.DEFAULT_TO_STATION)
         current_section_data = section_data
         current_abnormalities = section_data.get("abnormalities", [])
@@ -644,8 +658,6 @@ def refresh_system_data():
         logger.error(f"System refresh error: {e}")
         return jsonify(create_api_response(False, error=str(e))), 500
 
-# =================== ERROR HANDLERS ===================
-
 @app.errorhandler(404)
 def not_found(error):
     return jsonify(create_api_response(False, error="Endpoint not found")), 404
@@ -660,17 +672,13 @@ def handle_exception(e):
     logger.error(f"Unhandled exception: {e}")
     return jsonify(create_api_response(False, error=f"Unexpected error: {str(e)}")), 500
 
-# =================== APPLICATION STARTUP ===================
-
 if __name__ == '__main__':
-    # Create necessary directories
     os.makedirs("data/schedules", exist_ok=True)
     os.makedirs("data/live", exist_ok=True)
     os.makedirs("data/results", exist_ok=True)
     os.makedirs("data/kpi", exist_ok=True)
     os.makedirs("models", exist_ok=True)
 
-    # Ensure frontend directory exists
     if not os.path.exists("frontend"):
         logger.error("❌ Frontend directory not found! Please ensure frontend files are in place.")
         logger.error("Expected structure:")
@@ -680,56 +688,20 @@ if __name__ == '__main__':
         logger.error("    └── js/dashboard.js")
         exit(1)
 
-    # Initialize with sample data if data.jio doesn't exist
     if not os.path.exists(config.STATIC_SCHEDULE_FILE):
-        sample_data = [
-            {
-                "train_id": "12345",
-                "train_name": "Gooty Express",
-                "route": "main",
-                "track": "1",
-                "from_station": config.DEFAULT_FROM_STATION,
-                "to_station": config.DEFAULT_TO_STATION,
-                "scheduled_departure": "06:00",
-                "scheduled_arrival": "07:00",
-                "distance_km": 45,
-                "platform": "1",
-                "last_updated": datetime.now().isoformat(),
-                "status": "scheduled"
-            },
-            {
-                "train_id": "12346",
-                "train_name": "Guntakal Passenger",
-                "route": "main",
-                "track": "2",
-                "from_station": config.DEFAULT_FROM_STATION,
-                "to_station": config.DEFAULT_TO_STATION,
-                "scheduled_departure": "08:00",
-                "scheduled_arrival": "09:00",
-                "distance_km": 45,
-                "platform": "2",
-                "last_updated": datetime.now().isoformat(),
-                "status": "scheduled"
-            }
-        ]
-        with open(config.STATIC_SCHEDULE_FILE, 'w') as f:
-            json.dump(sample_data, f, indent=2)
-        logger.info("✅ Created sample data.jio file")
+        logger.warning("⚠️ Static schedule file not found and demo creation is disabled. Proceeding without static schedules.")
 
     logger.info("🚂 VyuhMitra Dashboard Server Starting...")
-    logger.info(f"📁 Frontend files: frontend/")
-    logger.info(f"🌐 Access dashboard at: http://{config.DASHBOARD_HOST}:{config.DASHBOARD_PORT}")
-    logger.info(f"📊 API endpoints available at: http://{config.DASHBOARD_HOST}:{config.DASHBOARD_PORT}/api/")
+    logger.info(f"    Frontend files: frontend/")
+    logger.info(f"    Access dashboard at: http://{config.DASHBOARD_HOST}:{config.DASHBOARD_PORT}")
+    logger.info(f"    API endpoints available at: http://{config.DASHBOARD_HOST}:{config.DASHBOARD_PORT}/api/")
 
-    # Initialize AI system
     try:
-        # Test AI system
         ai_stats = ai_system.get_system_stats()
         logger.info(f"🤖 AI System initialized: {ai_stats.get('total_solutions_generated', 0)} solutions generated")
     except Exception as e:
         logger.warning(f"⚠️ AI system initialization warning: {e}")
 
-    # Run the Flask application
     app.run(
         host=config.DASHBOARD_HOST,
         port=config.DASHBOARD_PORT,

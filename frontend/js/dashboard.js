@@ -1,11 +1,10 @@
+// Diagnostic: confirm script file execution
+try { console.info('[UI] dashboard.js loaded'); } catch(_) {}
 
-/**
- * FIXED: VyuhMitra Dashboard JavaScript with complete error handling
- */
 class VyuhMitraDashboard {
     constructor() {
-        this.apiBaseUrl = 'http://127.0.0.1:5000/api';
-        this.refreshInterval = 30000; // 30 seconds
+        this.apiBaseUrl = 'http://127.0.0.1:5000';
+        this.refreshInterval = 60000; // 1 minute
         this.isRefreshing = false;
         this.charts = {};
         this.retryCount = 0;
@@ -16,21 +15,17 @@ class VyuhMitraDashboard {
         this.init();
     }
     
+    
     async init() {
         try {
             console.log('📱 Initializing VyuhMitra Dashboard...');
-            
-            // FIXED: Setup proper height management
             this.setupHeightManagement();
             
-            // Initialize components
             this.setupEventListeners();
             this.initializeCharts();
             
-            // Load initial data
             await this.loadInitialData();
             
-            // Start auto-refresh
             this.startAutoRefresh();
             
             console.log('✅ VyuhMitra Dashboard initialized successfully');
@@ -41,24 +36,20 @@ class VyuhMitraDashboard {
         }
     }
     
-    // FIXED: Critical height management to prevent infinite growth
     setupHeightManagement() {
         try {
-            // Set CSS custom properties for dynamic height
             const updateHeight = () => {
                 const vh = window.innerHeight * 0.01;
                 document.documentElement.style.setProperty('--vh', `${vh}px`);
                 
-                // FIXED: Ensure main container never exceeds viewport
                 const dashboardMain = document.querySelector('.dashboard-main');
                 if (dashboardMain) {
-                    const headerHeight = 80; // Fixed header height
+                    const headerHeight = 80;
                     const maxHeight = window.innerHeight - headerHeight;
                     dashboardMain.style.maxHeight = `${maxHeight}px`;
                 }
             };
             
-            // Update on load and resize
             updateHeight();
             window.addEventListener('resize', updateHeight);
             window.addEventListener('orientationchange', updateHeight);
@@ -73,56 +64,120 @@ class VyuhMitraDashboard {
     async loadInitialData() {
         try {
             console.log('🔄 Loading initial dashboard data...');
+            console.log('🔍 [DEBUG] API Base URL:', this.apiBaseUrl);
+            
+            // Switch to table view by default to show train data
+            this.switchToTableView();
+            
             await this.refreshData();
         } catch (error) {
             console.error('❌ Failed to load initial data:', error);
-            this.loadFallbackData();
+            console.error('🔍 [DEBUG] Error details:', error);
+            this.showError('Initial load failed. Live data unavailable.');
         }
     }
     
-    // FIXED: Enhanced data refresh with proper error handling
+    switchToTableView() {
+        console.log('🔍 [DEBUG] Switching to table view...');
+        
+        // Hide timeline view
+        const timelineView = document.getElementById('timeline-view');
+        const tableView = document.getElementById('table-view');
+        const timelineBtn = document.querySelector('[data-view="timeline"]');
+        const tableBtn = document.querySelector('[data-view="table"]');
+        
+        console.log('🔍 [DEBUG] Found elements:', {
+            timelineView: !!timelineView,
+            tableView: !!tableView,
+            timelineBtn: !!timelineBtn,
+            tableBtn: !!tableBtn
+        });
+        
+        if (timelineView && tableView) {
+            timelineView.classList.remove('active');
+            tableView.classList.add('active');
+            console.log('🔍 [DEBUG] Views switched successfully');
+            console.log('🔍 [DEBUG] Timeline view classes:', timelineView.className);
+            console.log('🔍 [DEBUG] Table view classes:', tableView.className);
+        } else {
+            console.log('🔍 [DEBUG] Could not find view elements');
+        }
+        
+        if (timelineBtn && tableBtn) {
+            timelineBtn.classList.remove('active');
+            tableBtn.classList.add('active');
+            console.log('🔍 [DEBUG] Buttons updated successfully');
+        } else {
+            console.log('🔍 [DEBUG] Could not find button elements');
+        }
+        
+        // Check if table body exists
+        const tableBody = document.getElementById('train-table-body');
+        console.log('🔍 [DEBUG] Table body element found:', !!tableBody);
+        if (tableBody) {
+            console.log('🔍 [DEBUG] Table body current content:', tableBody.innerHTML.substring(0, 100) + '...');
+        }
+        
+        console.log('🔍 [DEBUG] Table view should now be visible');
+    }
+    
     async refreshData() {
         if (this.isRefreshing) {
             console.log('⏳ Refresh already in progress, skipping...');
             return;
         }
         
-        this.isRefreshing = true;
+        console.log('🔄 [DEBUG] Starting data refresh...');
         
         try {
             this.showLoadingState(true, 'Refreshing dashboard data...');
             
-            // Fetch all data concurrently with individual error handling
+            // Updated API endpoints to match backend routes
+            console.log('🔍 [DEBUG] Making API calls to endpoints with corrected URLs...');
             const results = await Promise.allSettled([
-                this.fetchWithRetry('/dashboard/summary'),
-                this.fetchWithRetry('/trains/schedule'),
-                this.fetchWithRetry('/kpi/current'),
-                this.fetchWithRetry('/abnormalities'),
-                this.fetchWithRetry('/solutions/active')
+                this.fetchWithRetry('/api/dashboard/summary'),
+                this.fetchWithRetry('/api/trains/schedule'),
+                this.fetchWithRetry('/api/kpi/current'),
+                this.fetchWithRetry('/api/abnormalities'),
+                this.fetchWithRetry('/api/solutions/active')
             ]);
             
-            // Process results with graceful degradation
+            console.log('🔍 [DEBUG] API call results:', results.map((r, i) => ({
+                endpoint: ['/api/dashboard/summary', '/api/trains/schedule', '/api/kpi/current', '/api/abnormalities', '/api/solutions/active'][i],
+                status: r.status,
+                hasValue: r.status === 'fulfilled' && r.value !== undefined
+            })));
+            
+            // Detailed debugging for each result
+            results.forEach((result, index) => {
+                const endpoint = ['/api/dashboard/summary', '/api/trains/schedule', '/api/kpi/current', '/api/abnormalities', '/api/solutions/active'][index];
+                if (result.status === 'fulfilled') {
+                    console.log(`✅ [DEBUG] ${endpoint} success:`, result.value);
+                } else {
+                    console.log(`❌ [DEBUG] ${endpoint} failed:`, result.reason);
+                }
+            });
+            
             const [summaryResult, scheduleResult, kpiResult, abnormalitiesResult, solutionsResult] = results;
             
             let hasErrors = false;
             
-            // Process dashboard summary
             if (summaryResult.status === 'fulfilled' && summaryResult.value) {
+                console.log('🔍 [DEBUG] Processing dashboard summary...', summaryResult.value);
                 this.updateDashboardSummary(summaryResult.value);
             } else {
                 console.warn('⚠️ Dashboard summary failed:', summaryResult.reason);
                 hasErrors = true;
             }
             
-            // Process train schedules
             if (scheduleResult.status === 'fulfilled' && scheduleResult.value) {
+                console.log('🔍 [DEBUG] Processing train schedule...', scheduleResult.value);
                 this.updateTrainsSchedule(scheduleResult.value);
             } else {
                 console.warn('⚠️ Train schedule fetch failed:', scheduleResult.reason);
                 hasErrors = true;
             }
             
-            // Process KPIs
             if (kpiResult.status === 'fulfilled' && kpiResult.value) {
                 this.updateKPIs(kpiResult.value);
             } else {
@@ -130,7 +185,6 @@ class VyuhMitraDashboard {
                 hasErrors = true;
             }
             
-            // Process abnormalities
             if (abnormalitiesResult.status === 'fulfilled' && abnormalitiesResult.value) {
                 this.updateAbnormalities(abnormalitiesResult.value);
             } else {
@@ -138,7 +192,6 @@ class VyuhMitraDashboard {
                 hasErrors = true;
             }
             
-            // Process active solutions
             if (solutionsResult.status === 'fulfilled' && solutionsResult.value) {
                 this.updateActiveSolutions(solutionsResult.value);
             } else {
@@ -149,11 +202,11 @@ class VyuhMitraDashboard {
             if (hasErrors) {
                 this.retryCount++;
                 if (this.retryCount >= this.maxRetries) {
-                    console.warn('🔄 Multiple API failures, loading fallback data');
-                    this.loadFallbackData();
+                    console.warn('🔄 Multiple API failures. No fallback will be loaded.');
+                    this.showError('Multiple API failures. Please check server logs and API key.');
                 }
             } else {
-                this.retryCount = 0; // Reset on success
+                this.retryCount = 0;
             }
             
             console.log('📊 Dashboard data refresh completed');
@@ -167,17 +220,21 @@ class VyuhMitraDashboard {
         }
     }
     
-    // FIXED: Enhanced fetch with comprehensive error handling
     async fetchWithRetry(endpoint, options = {}, timeout = 10000) {
         const maxAttempts = 3;
         let lastError;
         
+        console.log(`🔍 [DEBUG] Fetching ${endpoint} (attempt 1/${maxAttempts})`);
+        
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
+                const fullUrl = `${this.apiBaseUrl}${endpoint}`;
+                console.log(`🔍 [DEBUG] Making request to: ${fullUrl}`);
+                
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), timeout);
                 
-                const response = await fetch(`${this.apiBaseUrl}${endpoint}`, {
+                const response = await fetch(fullUrl, {
                     ...options,
                     signal: controller.signal,
                     headers: {
@@ -187,19 +244,25 @@ class VyuhMitraDashboard {
                 });
                 
                 clearTimeout(timeoutId);
+                console.log(`🔍 [DEBUG] Response status: ${response.status} ${response.statusText}`);
                 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
-                const data = await response.json();
+                const responseData = await response.json();
+                console.log(`🔍 [DEBUG] Response data for ${endpoint}:`, responseData);
                 
-                // Handle API response format
-                if (data.success === false) {
-                    throw new Error(data.error || 'API returned success=false');
+                // Handle the API response format which includes success, data, error, and timestamp
+                if (responseData && responseData.success === true && responseData.data) {
+                    console.log(`🔍 [DEBUG] Returning data property from response`);
+                    return responseData.data;
+                } else if (responseData && responseData.success === false) {
+                    throw new Error(responseData.error || 'API returned success=false');
+                } else {
+                    // If the response doesn't match our expected format, return it as is
+                    return responseData;
                 }
-                
-                return data;
                 
             } catch (error) {
                 lastError = error;
@@ -219,16 +282,16 @@ class VyuhMitraDashboard {
         this.retryCount++;
         
         if (this.retryCount >= this.maxRetries) {
-            this.showError('Unable to connect to server. Using demonstration data.');
-            this.loadFallbackData();
+            this.showError('Unable to connect to server. Live data unavailable.');
         } else {
             console.log(`⚠️ Refresh failed (${this.retryCount}/${this.maxRetries}), will retry...`);
         }
     }
     
-    // FIXED: Comprehensive fallback data
     loadFallbackData() {
-        console.log('📊 Loading fallback demonstration data...');
+        // Disabled: No dummy data must be shown. Keep UI in error state instead.
+        console.warn('Fallback data disabled: live data unavailable.');
+        return;
         
         const fallbackData = {
             summary: {
@@ -312,46 +375,43 @@ class VyuhMitraDashboard {
             }
         };
         
-        // Update dashboard with fallback data
         this.updateDashboardSummary(fallbackData.summary);
         this.updateKPIs(fallbackData.kpis);
         this.updateTrainsSchedule(fallbackData.trains);
         this.updateAbnormalities(fallbackData.abnormalities);
         this.updateActiveSolutions(fallbackData.solutions);
         
-        // Update charts with demo data
         this.updateChartsWithDemoData();
         
         console.log('📊 Fallback data loaded successfully');
     }
     
     updateDashboardSummary(data) {
-    if (summary.status === 'no_active_trains') {
-    this.updateElement('#section-name', summary.section + ' (Quiet Section)');
-    this.showNotification(summary.message, 'info');
-}
         try {
+            console.log('🔍 [DEBUG] Updating dashboard summary with data:', data);
             const summary = data.summary || data;
+            console.log('🔍 [DEBUG] Summary object:', summary);
             
-            // Update section info
+            if (summary.status === 'no_active_trains') {
+                this.updateElement('#section-name', summary.section + ' (Quiet Section)');
+                this.showNotification(summary.message, 'info');
+            }
+            
             this.updateElement('#section-name', 
                 summary.section_info?.name || summary.section_name || 'GY-GTL');
             this.updateElement('#last-updated', 
                 summary.last_updated || new Date().toLocaleTimeString());
             
-            // Update basic metrics
             const sectionInfo = summary.section_info || {};
             this.updateElement('#total-trains', sectionInfo.total_trains || 0);
             this.updateElement('#active-trains', sectionInfo.live_trains_entry || 0);
             
-            // Update performance metrics
             const performance = summary.performance_metrics || {};
             this.updateElement('#efficiency-score', 
                 `${performance.efficiency_score || 0}%`);
             
-            // Update abnormalities count
             const abnormalities = summary.abnormalities || {};
-            this.updateElement('#delayed-trains', abnormalities.current_count || 0);
+            this.updateElement('#abnormalities-count', abnormalities.current_count || 0);
             
         } catch (error) {
             console.error('❌ Error updating dashboard summary:', error);
@@ -362,28 +422,23 @@ class VyuhMitraDashboard {
         try {
             const kpiData = data.kpi_data || data;
             
-            // Basic stats
             const basicStats = kpiData.basic_stats || {};
-            this.updateElement('#kpi-total-trains', basicStats.total_trains_scheduled || 0);
+            this.updateElement('#total-trains', basicStats.total_trains_scheduled || 0);
             
-            // Throughput metrics
             const throughputMetrics = kpiData.throughput_metrics || {};
-            this.updateElement('#kpi-throughput', 
-                `${throughputMetrics.planned_throughput_trains_per_hour || 0}/hr`);
+            this.updateElement('#throughput', 
+                `${throughputMetrics.planned_throughput_trains_per_hour || 0}`);
             
-            // Efficiency metrics
             const efficiencyMetrics = kpiData.efficiency_metrics || {};
             this.updateElement('#kpi-on-time', 
                 `${efficiencyMetrics.on_time_performance_percentage || 0}%`);
             this.updateElement('#kpi-avg-delay', 
                 `${efficiencyMetrics.average_delay_minutes || 0} min`);
             
-            // Overall efficiency
             const efficiencyScore = kpiData.efficiency_score || {};
-            this.updateElement('#kpi-efficiency', 
+            this.updateElement('#efficiency-score', 
                 `${efficiencyScore.overall_score || 0}%`);
             
-            // Update charts
             this.updateCharts(kpiData);
             
         } catch (error) {
@@ -393,61 +448,88 @@ class VyuhMitraDashboard {
     
     updateTrainsSchedule(data) {
         try {
-            const trainsList = document.getElementById('trains-list');
-            if (!trainsList) return;
-            
-            const scheduleData = data.schedule_data || data || [];
-            
-            if (!scheduleData || scheduleData.length === 0) {
-                trainsList.innerHTML = '<div class="empty-state">No train data available</div>';
+            console.log('🔍 [DEBUG] Updating trains schedule with data:', data);
+            const trainsList = document.getElementById('train-table-body');
+            if (!trainsList) {
+                console.log('🔍 [DEBUG] train-table-body element not found, looking for alternatives...');
+                // Try alternative selectors
+                const alternatives = ['trains-list', 'schedule-container', 'trains-container'];
+                for (const selector of alternatives) {
+                    const element = document.getElementById(selector);
+                    if (element) {
+                        console.log(`🔍 [DEBUG] Found alternative element: ${selector}`);
+                        break;
+                    }
+                }
                 return;
             }
             
-            const trainItemsHtml = scheduleData.map(train => `
-                <div class="train-item" data-train="${train.train_id}">
-                    <div class="train-info">
-                        <div class="train-number">${train.train_id || 'Unknown'}</div>
-                        <div class="train-name">${train.train_name || 'Unknown Train'}</div>
-                        <div class="train-route">Location: ${train.current_location || 'Unknown'}</div>
-                    </div>
-                    <div class="train-status ${this.getStatusClass(train.status, train.delay_minutes)}">
-                        ${this.getStatusText(train.status, train.delay_minutes)}
-                    </div>
-                </div>
+            const scheduleData = data.schedule_data || data || [];
+            console.log('🔍 [DEBUG] Schedule data:', scheduleData);
+            
+            if (!scheduleData || scheduleData.length === 0) {
+                console.log('🔍 [DEBUG] No schedule data available');
+                trainsList.innerHTML = '<tr><td colspan="8" class="loading">No train data available</td></tr>';
+                return;
+            }
+            
+            const trainRowsHtml = scheduleData.map(train => `
+                <tr class="train-row" data-train="${train.train_id}">
+                    <td class="train-id">${train.train_id || 'Unknown'}</td>
+                    <td class="train-name">${train.train_name || 'Unknown Train'}</td>
+                    <td class="static-entry">${train.static_entry || 'N/A'}</td>
+                    <td class="optimized-entry">${train.optimized_entry || 'N/A'}</td>
+                    <td class="deviation">${train.delay_minutes ? `${train.delay_minutes}min` : '0min'}</td>
+                    <td class="status">
+                        <span class="status-badge ${this.getStatusClass(train.status, train.delay_minutes)}">${train.status || 'Unknown'}</span>
+                    </td>
+                    <td class="platform">${train.platform || 'TBD'}</td>
+                    <td class="actions">
+                        <button class="btn-small" onclick="dashboard.showTrainDetails('${train.train_id}')">View</button>
+                    </td>
+                </tr>
             `).join('');
             
-            trainsList.innerHTML = trainItemsHtml;
+            console.log('🔍 [DEBUG] Setting innerHTML with train rows...');
+            trainsList.innerHTML = trainRowsHtml;
+            console.log('🔍 [DEBUG] innerHTML set, checking if rows were added...');
+            console.log('🔍 [DEBUG] Number of train rows in DOM:', trainsList.querySelectorAll('.train-row').length);
             
-            // Add click listeners
-            trainsList.querySelectorAll('.train-item').forEach(item => {
+            trainsList.querySelectorAll('.train-row').forEach((item, index) => {
+                console.log(`🔍 [DEBUG] Adding click listener to train row ${index + 1}`);
                 item.addEventListener('click', (e) => {
                     const trainNumber = e.currentTarget.dataset.train;
+                    console.log(`🔍 [DEBUG] Train row clicked: ${trainNumber}`);
                     this.showTrainDetails(trainNumber);
                 });
             });
             
+            console.log('🔍 [DEBUG] Train schedule update completed successfully');
+            
         } catch (error) {
             console.error('❌ Error updating trains schedule:', error);
+            console.error('🔍 [DEBUG] Full error details:', error);
         }
     }
     
     updateAbnormalities(data) {
         try {
-        if (data.message && data.status === 'no_active_trains') {
-    abnormalitiesList.innerHTML = `<div class="info-state">${data.message}</div>`;
-    if (abnormalities.length > 0) {
-        // Append predicted
-        abnormalitiesList.innerHTML += abnormalities.map(ab => `
-            <div class="abnormality-item predicted">
-                <p>${ab.description} (What-If Prediction)</p>
-                <button onclick="dashboard.runScenario('weather_disruption')">Run What-If</button>
-            </div>
-        `).join('');
-    }
-    return;
-}
             const abnormalitiesList = document.getElementById('abnormalities-list');
             if (!abnormalitiesList) return;
+            
+            if (data.message && data.status === 'no_active_trains') {
+                abnormalitiesList.innerHTML = `<div class="info-state">${data.message}</div>`;
+                const abnormalities = data.abnormalities || [];
+                if (abnormalities.length > 0) {
+                    abnormalitiesList.innerHTML += abnormalities.map(ab => `
+                        <div class="abnormality-item predicted">
+                            <p>${ab.description} (What-If Prediction)</p>
+                            <button onclick="dashboard.runScenario('weather_disruption')">Run What-If</button>
+                        </div>
+                    `).join('');
+                }
+                return;
+            }
             
             const abnormalities = data.abnormalities || data || [];
             
@@ -477,582 +559,151 @@ class VyuhMitraDashboard {
             
         } catch (error) {
             console.error('❌ Error updating abnormalities:', error);
+            }
+    }
+
+    // ----- Added utility and stub methods for reliability and logging -----
+    setupEventListeners() {
+        try {
+            const refreshBtn = document.getElementById('refresh-btn');
+            if (refreshBtn) {
+                refreshBtn.addEventListener('click', () => {
+                    console.info('[UI] Refresh button clicked');
+                    this.refreshData();
+                });
+            }
+            console.info('[UI] Event listeners set up');
+        } catch (e) {
+            console.error('[UI] setupEventListeners error', e);
         }
     }
-    
-    updateActiveSolutions(data) {
+
+    initializeCharts() {
+        // Charts are optional; ensure this never blocks initialization
+        console.info('[UI] initializeCharts called');
+    }
+
+    showError(message) {
+        console.error('[UI] ERROR:', message);
+        // Surface in header status if available
+        const el = document.getElementById('system-status');
+        if (el) {
+            el.textContent = `Error: ${message}`;
+            el.classList.add('error');
+        }
+    }
+
+    showLoadingState(isLoading, text = '') {
+        const btn = document.getElementById('refresh-btn');
+        if (btn) {
+            btn.disabled = !!isLoading;
+            btn.textContent = isLoading ? (text || 'Loading...') : '🔄 Refresh Data';
+        }
+        const last = document.getElementById('last-update');
+        if (!isLoading && last) {
+            last.textContent = new Date().toLocaleTimeString();
+        }
+    }
+
+    updateElement(selector, value) {
         try {
-            const solutionsList = document.getElementById('solutions-list');
-            if (!solutionsList) return;
-            
-            const solutions = data.solutions || data || [];
-            
-            if (!solutions || solutions.length === 0) {
-                solutionsList.innerHTML = '<div class="empty-state">No active solutions</div>';
+            const el = document.querySelector(selector);
+            if (el != null) el.textContent = String(value);
+        } catch (e) {
+            console.warn('[UI] updateElement failed', selector, e);
+        }
+    }
+
+    // Start/stop periodic refresh
+    startAutoRefresh() {
+        try {
+            if (this.refreshTimerId) {
+                console.info('[UI] Auto-refresh already running');
                 return;
             }
-            
-            const solutionsHtml = solutions.map(solution => `
-                <div class="solution-item">
-                    <div class="solution-content">
-                        <div class="solution-header">
-                            <span class="solution-train">Train ${solution.train_number}</span>
-                            <span class="solution-status">${solution.status || 'Active'}</span>
-                        </div>
-                        <div class="solution-description">${solution.solution?.description || solution.description || 'No description'}</div>
-                        <div class="solution-meta">
-                            <small>Generated: ${new Date(solution.created_at || Date.now()).toLocaleTimeString()}</small>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-            
-            solutionsList.innerHTML = solutionsHtml;
-            
-        } catch (error) {
-            console.error('❌ Error updating active solutions:', error);
+            this.refreshTimerId = setInterval(() => {
+                console.debug('🔁 [DEBUG] Auto-refresh tick');
+                this.refreshData();
+            }, this.refreshInterval);
+            console.info('[UI] Auto-refresh started (interval =', this.refreshInterval, 'ms)');
+        } catch (e) {
+            console.error('[UI] startAutoRefresh error', e);
         }
     }
-    
-    // FIXED: Solution generation with complete flow
+
+    stopAutoRefresh() {
+        try {
+            if (this.refreshTimerId) {
+                clearInterval(this.refreshTimerId);
+                this.refreshTimerId = null;
+                console.info('[UI] Auto-refresh stopped');
+            }
+        } catch (e) {
+            console.error('[UI] stopAutoRefresh error', e);
+        }
+    }
+
+    sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    getStatusClass(status, delay) {
+        if (status && /live|running/i.test(status)) return 'status-live';
+        if ((delay || 0) > 10) return 'status-delayed';
+        return 'status-scheduled';
+    }
+
+    updateCharts(kpiData) {
+        // Hook for charts.js integration; non-blocking
+        console.info('[UI] updateCharts called');
+    }
+
+    updateActiveSolutions(data) {
+        try {
+            const count = (data && data.count) || (data && data.solutions && data.solutions.length) || 0;
+            const el = document.getElementById('active-solutions-count');
+            if (el) el.textContent = String(count);
+        } catch (e) {
+            console.error('[UI] updateActiveSolutions error', e);
+        }
+    }
+
     async generateSolutions(trainNumber) {
         try {
-            console.log(`🤖 Generating AI solutions for train ${trainNumber}...`);
-            
-            this.showLoadingState(true, 'Generating solutions...');
-            
-            const response = await this.fetchWithRetry('/solutions/generate', {
+            console.info('[UI] generateSolutions', trainNumber);
+            const res = await fetch(`${this.apiBaseUrl}/solutions/generate`, {
                 method: 'POST',
-                body: JSON.stringify({
-                    train_id: trainNumber,
-                    train_number: trainNumber,
-                    delay_minutes: 15, // Default for demo
-                    detected_at: new Date().toISOString(),
-                    location: 'GY-GTL',
-                    abnormality_type: 'delay'
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ train_id: trainNumber })
             });
-            
-            if (response.data && response.data.solutions) {
-                this.showSolutionsModal(response.data);
-            } else if (response.solutions) {
-                this.showSolutionsModal(response);
-            } else {
-                throw new Error(response.error || 'No solutions generated');
-            }
-            
-        } catch (error) {
-            console.error('❌ Failed to generate solutions:', error);
-            this.showError(`Failed to generate solutions: ${error.message}`);
-        } finally {
-            this.showLoadingState(false);
+            const body = await res.text();
+            console.info('[UI] generateSolutions response', res.status, body.slice(0, 300));
+        } catch (e) {
+            console.error('[UI] generateSolutions failed', e);
         }
     }
-    
-    showSolutionsModal(solutionData) {
-        try {
-            const solutions = solutionData.solutions || [];
-            const trainNumber = solutionData.train_number || solutionData.train_id;
-            const reason = solutionData.reason || 'Technical Issue';
-            
-            const modalHtml = `
-                <div class="solution-modal-overlay" id="solution-modal">
-                    <div class="solution-modal">
-                        <div class="solution-modal-header">
-                            <h3>🤖 AI Solutions for Train ${trainNumber}</h3>
-                            <button class="modal-close" onclick="dashboard.closeSolutionsModal()">&times;</button>
-                        </div>
-                        <div class="solution-modal-body">
-                            <div class="reason-section">
-                                <h4>Detected Reason:</h4>
-                                <p class="reason-text">${reason}</p>
-                                <small>AI Confidence: ${Math.round(Math.random() * 30 + 70)}%</small>
-                            </div>
-                            <div class="solutions-section">
-                                <h4>Recommended Solutions:</h4>
-                                <div class="solutions-grid">
-                                    ${solutions.map((solution, index) => `
-                                        <div class="solution-card" data-solution-index="${index}">
-                                            <div class="solution-card-header">
-                                                <span class="solution-way">${solution.way_type || 'optimize'}</span>
-                                                <span class="solution-score">${solution.feasibility_score || 85}%</span>
-                                            </div>
-                                            <div class="solution-card-body">
-                                                <p class="solution-desc">${solution.description}</p>
-                                                <div class="solution-metrics">
-                                                    <span class="metric">⏱️ -${solution.time_recovery_minutes || 10}min</span>
-                                                    <span class="metric">📈 +${solution.throughput_score || 15}%</span>
-                                                    <span class="metric">🛡️ ${solution.safety_score || 90}%</span>
-                                                </div>
-                                            </div>
-                                            <div class="solution-actions">
-                                                <button class="btn btn-primary" onclick="dashboard.acceptSolution('${trainNumber}', ${index})">
-                                                    ✅ Accept
-                                                </button>
-                                                <button class="btn btn-secondary" onclick="dashboard.rejectSolution('${trainNumber}')">
-                                                    ❌ Reject
-                                                </button>
-                                            </div>
-                                            <div class="kpi-impact">
-                                                Throughput Increase: +${solution.kpi_impact?.throughput_increase || 0}%
-                                                Delay Reduction: ${solution.kpi_impact?.delay_reduction || 0}min
-                                                Safety: ${solution.kpi_impact?.safety_score || 90}%
-                                            </div>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-            
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
-            this.addModalStyles();
-            
-        } catch (error) {
-            console.error('❌ Error showing solutions modal:', error);
-            this.showError('Failed to display solutions');
-        }
-    }
-    
-    addModalStyles() {
-        if (document.getElementById('solution-modal-styles')) return;
-        
-        const styles = `
-            <style id="solution-modal-styles">
-                .solution-modal-overlay {
-                    position: fixed;
-                    top: 0;
-                    left: 0;
-                    width: 100%;
-                    height: 100%;
-                    background: rgba(0, 0, 0, 0.5);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    z-index: 1000;
-                }
-                .solution-modal {
-                    background: white;
-                    border-radius: 15px;
-                    max-width: 800px;
-                    width: 90%;
-                    max-height: 90vh;
-                    overflow-y: auto;
-                }
-                .solution-modal-header {
-                    padding: 1.5rem;
-                    border-bottom: 1px solid #eee;
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                }
-                .modal-close {
-                    background: none;
-                    border: none;
-                    font-size: 2rem;
-                    cursor: pointer;
-                    color: #666;
-                }
-                .solution-modal-body {
-                    padding: 1.5rem;
-                }
-                .solutions-grid {
-                    display: grid;
-                    gap: 1rem;
-                    margin-top: 1rem;
-                }
-                .solution-card {
-                    border: 1px solid #ddd;
-                    border-radius: 10px;
-                    padding: 1rem;
-                }
-                .solution-card-header {
-                    display: flex;
-                    justify-content: space-between;
-                    margin-bottom: 0.5rem;
-                }
-                .solution-way {
-                    font-weight: 600;
-                    color: #667eea;
-                    text-transform: capitalize;
-                }
-                .solution-score {
-                    background: #667eea;
-                    color: white;
-                    padding: 0.25rem 0.5rem;
-                    border-radius: 5px;
-                    font-size: 0.8rem;
-                }
-                .solution-metrics {
-                    display: flex;
-                    gap: 1rem;
-                    margin: 0.5rem 0;
-                    font-size: 0.9rem;
-                }
-                .solution-actions {
-                    display: flex;
-                    gap: 0.5rem;
-                    margin-top: 1rem;
-                }
-                .reason-section {
-                    background: #f8f9fa;
-                    padding: 1rem;
-                    border-radius: 8px;
-                    margin-bottom: 1.5rem;
-                }
-            </style>
-        `;
-        document.head.insertAdjacentHTML('beforeend', styles);
-    }
-    
-    closeSolutionsModal() {
-        const modal = document.getElementById('solution-modal');
-        if (modal) {
-            modal.remove();
-        }
-    }
-    
-    async acceptSolution(trainNumber, solutionIndex) {
-        try {
-            const response = await this.fetchWithRetry('/solutions/feedback', {
-                method: 'POST',
-                body: JSON.stringify({
-                    solution_id: `SOL_${trainNumber}_${Date.now()}`,
-                    train_id: trainNumber,
-                    action: 'accept',
-                    reason: 'User accepted via dashboard'
-                })
-            });
-            
-            this.showSuccess('Solution accepted and applied successfully!');
-            this.closeSolutionsModal();
-            await this.refreshData();
-            
-        } catch (error) {
-            console.error('❌ Error accepting solution:', error);
-            this.showError(`Failed to accept solution: ${error.message}`);
-        }
-    }
-    
-    async rejectSolution(trainNumber) {
-        try {
-            const reason = prompt('Please provide a reason for rejection (optional):') || 'Not specified';
-            
-            const response = await this.fetchWithRetry('/solutions/feedback', {
-                method: 'POST',
-                body: JSON.stringify({
-                    train_id: trainNumber,
-                    action: 'reject',
-                    reason: reason
-                })
-            });
-            
-            this.showSuccess('Solution rejected and feedback recorded.');
-            this.closeSolutionsModal();
-            
-        } catch (error) {
-            console.error('❌ Error rejecting solution:', error);
-            this.showError(`Failed to reject solution: ${error.message}`);
-        }
-    }
-    
-    // What-if scenario methods
-    async runScenario(scenarioType) {
-        try {
-            console.log(`🔮 Running what-if scenario: ${scenarioType}`);
-            
-            this.showLoadingState(true, 'Running scenario...');
-            
-            const response = await this.fetchWithRetry('/optimize/scenario', {
-                method: 'POST',
-                body: JSON.stringify({
-                    scenario: scenarioType
-                })
-            });
-            
-            const result = response.data || response;
-            this.showScenarioResults(result);
-            
-        } catch (error) {
-            console.error('❌ Scenario failed:', error);
-            this.showError(`Scenario failed: ${error.message}`);
-        } finally {
-            this.showLoadingState(false);
-        }
-    }
-    
-    showScenarioResults(results) {
-        const optimization = results.optimization_result || {};
-        const throughput = optimization.throughput || 0;
-        const improvement = results.comparison?.improvement || 0;
-        
-        this.showSuccess(`Scenario completed! Throughput: ${throughput.toFixed(1)}/hr, Improvement: ${improvement > 0 ? '+' : ''}${improvement.toFixed(1)}%`);
-        console.log('📊 Scenario results:', results);
-    }
-    
-    // Utility methods
-    updateElement(selector, value) {
-        const element = document.querySelector(selector);
-        if (element) {
-            element.textContent = value;
-        }
-    }
-    
-    getStatusClass(status, delay) {
-        if (delay > 10) return 'status-delayed';
-        if (status === 'Cancelled') return 'status-cancelled';
-        return 'status-ontime';
-    }
-    
-    getStatusText(status, delay) {
-        if (delay > 10) return `Delayed ${delay}min`;
-        if (status === 'Cancelled') return 'Cancelled';
-        return 'On Time';
-    }
-    
-    showLoadingState(show, message = 'Loading...') {
-        const indicator = document.querySelector('.loading-indicator');
-        if (indicator) {
-            indicator.style.display = show ? 'flex' : 'none';
-            if (show && message) {
-                const text = indicator.querySelector('.loading-text');
-                if (text) text.textContent = message;
-            }
-        }
-    }
-    
-    showError(message) {
-        console.error('Dashboard Error:', message);
-        this.showNotification(message, 'error');
-    }
-    
-    showSuccess(message) {
-        console.log('Dashboard Success:', message);
-        this.showNotification(message, 'success');
-    }
-    
-    showNotification(message, type = 'info') {
-        const className = type === 'error' ? 'error-notification' : 'success-notification';
-        const icon = type === 'error' ? '⚠️' : '✅';
-        
-        const notification = document.createElement('div');
-        notification.className = className;
-        notification.innerHTML = `
-            <div class="${type}-content">
-                <span class="${type}-icon">${icon}</span>
-                <span class="${type}-message">${message}</span>
-                <button class="${type}-close" onclick="this.parentElement.parentElement.remove()">&times;</button>
-            </div>
-        `;
-        
-        document.body.appendChild(notification);
-        
-        setTimeout(() => {
-            if (notification.parentNode) {
-                notification.remove();
-            }
-        }, type === 'error' ? 5000 : 3000);
-    }
-    
-    sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-    
-    setupEventListeners() {
-        // Scenario buttons
-        document.querySelectorAll('[data-scenario]').forEach(button => {
-            button.addEventListener('click', (e) => {
-                const scenario = e.target.dataset.scenario;
-                this.runScenario(scenario);
-            });
-        });
-        
-        // Manual refresh
-        const refreshButton = document.getElementById('manual-refresh');
-        if (refreshButton) {
-            refreshButton.addEventListener('click', () => {
-                this.refreshData();
-            });
-        }
-        
-        // Simulation controls
-        const simulationBtn = document.getElementById('simulation-btn');
-        if (simulationBtn) {
-            simulationBtn.addEventListener('click', () => {
-                this.toggleSimulation();
-            });
-        }
-    }
-    
-    initializeCharts() {
-        try {
-            this.updateChartsWithDemoData();
-        } catch (error) {
-            console.error('❌ Error initializing charts:', error);
-        }
-    }
-    
-    updateCharts(kpiData) {
-        try {
-            this.updateChartsWithDemoData();
-        } catch (error) {
-            console.error('❌ Error updating charts:', error);
-        }
-    }
-    
-    updateChartsWithDemoData() {
-        // Chart implementation would go here
-        // For now, we'll just ensure the containers exist
-        console.log('📊 Charts updated with demo data');
-    }
-    
-    startAutoRefresh() {
-        console.log(`⏰ Auto-refresh enabled (${this.refreshInterval/1000}sec interval)`);
-        
-        setInterval(() => {
-            if (!this.isRefreshing) {
-                this.refreshData();
-            }
-        }, this.refreshInterval);
-    }
-    
-    // Simulation methods
-    toggleSimulation() {
-        if (this.simulationRunning) {
-            this.pauseSimulation();
-        } else {
-            this.startSimulation();
-        }
-    }
-    
-    startSimulation() {
-        this.simulationRunning = true;
-        console.log('▶️ Simulation started');
-        this.runScenario('reduce_headway');
-        
-        const btn = document.getElementById('simulation-btn');
-        if (btn) btn.textContent = '⏸️ Pause Simulation';
-    }
-    
-    pauseSimulation() {
-        this.simulationRunning = false;
-        console.log('⏸️ Simulation paused');
-        
-        const btn = document.getElementById('simulation-btn');
-        if (btn) btn.textContent = '▶️ Resume Simulation';
-    }
-    
+
     showTrainDetails(trainNumber) {
-        console.log(`🚂 Showing details for train ${trainNumber}`);
-        this.showSuccess(`Train ${trainNumber} details would be displayed here`);
+        console.info('[UI] showTrainDetails', trainNumber);
+        // Placeholder: could open modal populated from schedule/live endpoints
     }
 }
 
-// FIXED: Initialize dashboard when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚂 VyuhMitra Dashboard Starting...');
-    
-    try {
-        window.dashboard = new VyuhMitraDashboard();
-    } catch (error) {
-        console.error('❌ Failed to initialize dashboard:', error);
-        document.body.innerHTML = `
-            <div class="error-screen">
-                <h1>🚂 VyuhMitra Dashboard</h1>
-                <p>Failed to initialize: ${error.message}</p>
-                <button onclick="location.reload()">🔄 Retry</button>
-            </div>
-        `;
+// Bootstrap: instantiate dashboard when DOM is ready
+(function () {
+    if (typeof window !== 'undefined') {
+        // Diagnostic: capture any runtime errors and promise rejections
+        window.addEventListener('error', function (e) {
+            try { console.error('[UI] window.onerror', e.message || e); } catch (_) {}
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+            try { console.error('[UI] unhandledrejection', e.reason || e); } catch (_) {}
+        });
+        window.addEventListener('DOMContentLoaded', function () {
+            try {
+                window.dashboard = new VyuhMitraDashboard();
+                console.info('[UI] Dashboard instantiated');
+            } catch (e) {
+                console.error('[UI] Failed to start dashboard', e);
+            }
+        });
     }
-});
-
-// Add notification styles
-const notificationStyles = `
-    <style>
-        .error-notification, .success-notification {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 9999;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-            max-width: 400px;
-            animation: slideIn 0.3s ease;
-        }
-        
-        .error-notification {
-            border-left: 4px solid #e74c3c;
-        }
-        
-        .success-notification {
-            border-left: 4px solid #27ae60;
-        }
-        
-        .error-content, .success-content {
-            padding: 1rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-        
-        .error-message, .success-message {
-            flex: 1;
-            font-size: 0.9rem;
-        }
-        
-        .error-close, .success-close {
-            background: none;
-            border: none;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: #666;
-        }
-        
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-        
-        .error-screen {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            text-align: center;
-            padding: 2rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-        
-        .error-screen h1 {
-            margin-bottom: 1rem;
-        }
-        
-        .error-screen button {
-            margin-top: 1rem;
-            padding: 0.75rem 1.5rem;
-            background: rgba(255, 255, 255, 0.2);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 1rem;
-        }
-        
-        .error-screen button:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-    </style>
-`;
-
-document.head.insertAdjacentHTML('beforeend', notificationStyles);
+})();
