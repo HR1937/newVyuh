@@ -5,7 +5,7 @@ class Config:
     """Configuration settings for VyuhMitra application"""
 
     # API Configuration
-    RAILRADAR_API_KEY = "rr_live_tfKPQhebmFotXLyceihcffYvgw3xcMMt"
+    RAILRADAR_API_KEY = "rr_live_tfKPQhebmFotXLyceihcffYvgw3xcMMt"  # From your key
     RAILRADAR_BASE_URL = "https://railradar.in/api/v1"
 
     # Default section for processing
@@ -48,7 +48,8 @@ class Config:
     RESULTS_DIR = "data/results"
     KPI_DIR = "data/kpi"
     ML_MODEL_PATH = "models/reason_model.pkl"
-    STATIC_SCHEDULE_FILE = "data.jio"
+    STATIC_SCHEDULE_FILE = "data.jio"  # JSON for static schedules
+    PAST_DATA_FILE = "data/past_abnormalities.json"  # For ML training and what-if
 
     # Common reasons for delays (from Indian Railways experience)
     COMMON_DELAY_REASONS = [
@@ -69,6 +70,30 @@ class Config:
         "replace_train",     # Replace with another train
         "hold_at_station",   # Hold at station temporarily
         "speed_adjustment"   # Adjust speed to recover time
+    ]
+
+    # New: Reason to Ways mapping (fix no_ways_found)
+    REASON_TO_WAYS = {
+        "Crew Shortage": ["replace_train", "hold_at_station"],
+        "Technical Failure": ["replace_train", "change_track"],
+        "Track Obstruction": ["change_route", "hold_at_station"],
+        "Signal Issue": ["change_track", "speed_adjustment"],
+        "Weather Disruption": ["change_route", "hold_at_station"],
+        "Late Running of Connecting Train": ["speed_adjustment", "change_route"],
+        "Station Congestion": ["change_track", "hold_at_station"],
+        "Engineering Work": ["change_route", "change_track"]
+    }
+
+    # ML Confidence threshold
+    MIN_CONFIDENCE = 0.5
+
+    # Rejection reasons for ML learning
+    REJECTION_REASONS = [
+        "Not Feasible",
+        "Safety Concern",
+        "Cost Too High",
+        "Better Alternative",
+        "Other"
     ]
 
     @staticmethod

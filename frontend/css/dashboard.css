@@ -1264,3 +1264,75 @@ body {
   overflow-y: auto;
 }
 
+.abnormalities-container,
+.solutions-container,
+.recommendations-container {
+    max-height: 400px !important;
+    overflow-y: auto !important;
+}
+/* Fix infinite height in dashboard containers */
+.dashboard-grid {
+    grid-auto-rows: min-content;
+    max-height: 100vh;
+    overflow-y: auto;
+}
+
+.card {
+    min-height: 300px;
+    max-height: 600px;
+    overflow: hidden;
+}
+
+.abnormalities-container,
+.solutions-container,
+.recommendations-container {
+    max-height: 400px !important;
+    overflow-y: auto !important;
+    padding-right: 10px;
+}
+
+.schedule-view {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.data-table {
+    max-height: 400px;
+    overflow-y: auto;
+    display: block;
+}
+
+.data-table thead,
+.data-table tbody {
+    display: block;
+}
+
+.data-table thead {
+    position: sticky;
+    top: 0;
+    background: white;
+    z-index: 10;
+}
+
+.data-table tbody {
+    max-height: 350px;
+    overflow-y: auto;
+}
+
+.data-table tr {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+}
+
+/* Fix simulation canvas container */
+.simulation-canvas-container {
+    max-height: 400px;
+    overflow: hidden;
+}
+
+/* Fix modal content */
+.modal-body {
+    max-height: 400px;
+    overflow-y: auto;
+}

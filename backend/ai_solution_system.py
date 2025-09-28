@@ -174,13 +174,13 @@ class AIMLSolutionSystem:
 
     def select_ways_for_reason(self, reason: str, abnormality: Dict) -> List[Dict]:
         """Select applicable 'ways' (solution types) based on reason"""
-        ways = []
+        ways: List[Dict] = []
 
         train_id = abnormality["train_id"]
-        location = abnormality["location"]
-        delay = abnormality["delay_minutes"]
+        location = abnormality.get("location", "Unknown")
+        delay = abnormality.get("delay_minutes", 0)
 
-        # Rule-based way selection based on Indian Railways practices
+        # Technical/Breakdown
         if reason in ["Technical Failure", "Train Breakdown"]:
             ways.extend([
                 {
@@ -197,6 +197,7 @@ class AIMLSolutionSystem:
                 }
             ])
 
+        # Track/Signal/Engineering
         if reason in ["Track Obstruction", "Signal Issue", "Engineering Work"]:
             ways.extend([
                 {
@@ -213,19 +214,42 @@ class AIMLSolutionSystem:
                 }
             ])
 
+        # Congestion/Connecting
         if reason in ["Station Congestion", "Late Running of Connecting Train"]:
             ways.extend([
                 {
                     "type": "speed_adjustment",
                     "description": f"Increase speed of train {train_id} to recover lost time",
                     "feasibility_score": 80,
-                    "time_required": 0  # Immediate
+                    "time_required": 0
                 },
                 {
                     "type": "hold_at_station",
                     "description": f"Brief hold at {location} to clear congestion",
                     "feasibility_score": 85,
                     "time_required": 10
+                }
+            ])
+
+        if reason in ["Crew Shortage"]:
+            ways.extend([
+                {
+                    "type": "replace_train",
+                    "description": f"Replace crew or swap consist for train {train_id}",
+                    "feasibility_score": 75,
+                    "time_required": 20
+                },
+                {
+                    "type": "hold_at_station",
+                    "description": f"Hold at next crew-available station for {train_id}",
+                    "feasibility_score": 80,
+                    "time_required": 10
+                },
+                {
+                    "type": "speed_adjustment",
+                    "description": f"Adjust speeds to align with crew availability window",
+                    "feasibility_score": 70,
+                    "time_required": 0
                 }
             ])
 
@@ -238,11 +262,27 @@ class AIMLSolutionSystem:
                 "time_required": 0
             })
 
+        if not ways:
+            ways = [
+                {
+                    "type": "hold_at_station",
+                    "description": f"Temporary hold for {train_id} to stabilize flow",
+                    "feasibility_score": 70,
+                    "time_required": 10
+                },
+                {
+                    "type": "speed_adjustment",
+                    "description": f"Adjust speed envelope for {train_id} to recover",
+                    "feasibility_score": 70,
+                    "time_required": 0
+                }
+            ]
+
         # Return top 2-3 most feasible ways
         ways = sorted(ways, key=lambda x: x["feasibility_score"], reverse=True)[:3]
-
         self.logger.info(f"Selected {len(ways)} ways for reason '{reason}'")
         return ways
+
 
     def optimize_solutions_with_cpsat(self, ways: List[Dict], abnormality: Dict) -> List[Dict]:
         """Use OR-Tools CP-SAT to optimize solutions from selected ways"""

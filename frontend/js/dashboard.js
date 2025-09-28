@@ -4,17 +4,123 @@
  */
 
 class VyuhMitraDashboard {
-    constructor() {
-        this.apiBase = '';
-        this.refreshInterval = null;
-        this.currentData = null;
-        this.charts = {};
-        this.simulationData = {};
-        this.simulationRunning = false;
-        this.simulationTime = 360; // 6:00 AM in minutes
-        this.init();
-    }
+     constructor() {
+    this.apiBase = ""
+    this.refreshInterval = null
+    this.currentData = null
+    this.charts = {}
+    this.simulationData = {}
+    this.simulationRunning = false
+    this.simulationTime = 360 // 6:00 AM in minutes
+    this.errorBannerId = "vm-error-banner" // single banner id
+    this.init()
+  }
 
+async refreshData() {
+    console.log("🔄 Refreshing live data...")
+    this.showLoading(true)
+
+    try {
+      const [summaryResponse, scheduleResponse, kpiResponse, abnormalitiesResponse, solutionsResponse] =
+        await Promise.all([
+          fetch("/api/dashboard/summary"),
+          fetch("/api/trains/schedule"),
+          fetch("/api/kpi/current"),
+          fetch("/api/abnormalities"),
+          fetch("/api/solutions/active"),
+        ])
+
+      const ok = [summaryResponse, scheduleResponse, kpiResponse, abnormalitiesResponse, solutionsResponse].every(
+        (r) => r.ok,
+      )
+      if (!ok) throw new Error("One or more API requests failed")
+
+      const summaryData = await summaryResponse.json()
+      const scheduleData = await scheduleResponse.json()
+      const kpiData = await kpiResponse.json()
+      const abnormalitiesData = await abnormalitiesResponse.json()
+      const solutionsData = await solutionsResponse.json()
+
+      if (summaryData.success && scheduleData.success) {
+        this.currentData = {
+          summary: summaryData.data.summary,
+          schedules: scheduleData.data.schedule_data || [],
+          kpis: kpiData.success ? kpiData.data.kpi_data || {} : this.currentData?.kpis || {},
+          abnormalities: abnormalitiesData.success
+            ? abnormalitiesData.data.abnormalities || []
+            : this.currentData?.abnormalities || [],
+          solutions: solutionsData.success ? solutionsData.data.solutions || [] : this.currentData?.solutions || [],
+        }
+
+        this.updateDashboard()
+        this.hideErrorBanner() //
+        console.log("✅ Dashboard updated with live data")
+        this.updateSimulationData()
+      } else {
+        throw new Error("One or more API responses returned success=false")
+      }
+    } catch (error) {
+      console.error("❌ Error fetching data:", error)
+      this.showErrorBanner("Live data unavailable. Retrying...") //
+    } finally {
+      this.showLoading(false)
+      this.updateTimestamp()
+    }
+  }
+
+  showErrorBanner(message) {
+    let banner = document.getElementById(this.errorBannerId)
+    if (!banner) {
+      banner = document.createElement("div")
+      banner.id = this.errorBannerId
+      banner.setAttribute("role", "status")
+      Object.assign(banner.style, {
+        position: "fixed",
+        top: "10px",
+        right: "10px",
+        left: "10px",
+        zIndex: 9999,
+        padding: "10px 14px",
+        background: "#e74c3c",
+        color: "#fff",
+        borderRadius: "8px",
+        textAlign: "center",
+      })
+      document.body.appendChild(banner)
+    }
+    banner.textContent = `⚠️ ${message}`
+  }
+
+  hideErrorBanner() {
+    const banner = document.getElementById(this.errorBannerId)
+    if (banner && banner.parentNode) {
+      banner.parentNode.removeChild(banner)
+    }
+  }
+}
+    updateDashboard(summary, schedule, kpi, abnormalities, solutions) {
+        const container = document.getElementById('dashboard-content');
+        container.innerHTML = '';  // Fix: Clear before update to prevent height growth
+        // Append new content (e.g., tables, charts)
+        const table = document.createElement('table');
+        // ... populate with data ...
+        container.appendChild(table);
+
+        // Show solutions with buttons
+        solutions.forEach(sol => {
+            const div = document.createElement('div');
+            div.innerHTML = `Solution: ${sol.way} - KPI: ${sol.kpi.throughput}`;
+            const acceptBtn = document.createElement('button');
+            acceptBtn.textContent = 'Accept';
+            acceptBtn.onclick = () => this.acceptSolution(sol);
+            const rejectBtn = document.createElement('button');
+            rejectBtn.textContent = 'Reject';
+            rejectBtn.onclick = () => this.rejectSolution(sol);
+            div.append(acceptBtn, rejectBtn);
+            container.appendChild(div);
+        });
+        console.log('Dashboard updated successfully');
+    }
     init() {
         console.log('🚂 VyuhMitra Dashboard Starting...');
         this.setupEventListeners();
@@ -109,55 +215,7 @@ class VyuhMitraDashboard {
         await this.refreshData();
     }
 
-    async refreshData() {
-        console.log('🔄 Refreshing live data...');
-        this.showLoading(true);
 
-        try {
-            // Fetch all required data in parallel
-            const [summaryResponse, scheduleResponse, kpiResponse, abnormalitiesResponse, solutionsResponse] = await Promise.all([
-                fetch('/api/dashboard/summary'),
-                fetch('/api/trains/schedule'),
-                fetch('/api/kpi/current'),
-                fetch('/api/abnormalities'),
-                fetch('/api/solutions/active')
-            ]);
-
-            // Parse responses
-            const summaryData = await summaryResponse.json();
-            const scheduleData = await scheduleResponse.json();
-            const kpiData = await kpiResponse.json();
-            const abnormalitiesData = await abnormalitiesResponse.json();
-            const solutionsData = await solutionsResponse.json();
-
-            // Validate responses
-            if (summaryData.success && scheduleData.success && kpiData.success && abnormalitiesData.success) {
-                this.currentData = {
-                    summary: summaryData.data.summary,
-                    schedules: scheduleData.data.schedule_data || [],
-                    kpis: kpiData.data.kpi_data || {},
-                    abnormalities: abnormalitiesData.data.abnormalities || [],
-                    solutions: solutionsData.success ? solutionsData.data.solutions || [] : []
-                };
-
-                this.updateDashboard();
-                console.log('✅ Dashboard updated with live data');
-
-                // Update simulation data if available
-                this.updateSimulationData();
-
-            } else {
-                throw new Error('One or more API requests failed');
-            }
-        } catch (error) {
-            console.error('❌ Error fetching data:', error);
-            this.showError(error.message);
-            this.loadFallbackData();
-        } finally {
-            this.showLoading(false);
-            this.updateTimestamp();
-        }
-    }
 
     loadFallbackData() {
         // Load simulated data when API fails
