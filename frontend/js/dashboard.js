@@ -326,6 +326,10 @@ class VyuhMitraDashboard {
     }
     
     updateDashboardSummary(data) {
+    if (summary.status === 'no_active_trains') {
+    this.updateElement('#section-name', summary.section + ' (Quiet Section)');
+    this.showNotification(summary.message, 'info');
+}
         try {
             const summary = data.summary || data;
             
@@ -429,6 +433,19 @@ class VyuhMitraDashboard {
     
     updateAbnormalities(data) {
         try {
+        if (data.message && data.status === 'no_active_trains') {
+    abnormalitiesList.innerHTML = `<div class="info-state">${data.message}</div>`;
+    if (abnormalities.length > 0) {
+        // Append predicted
+        abnormalitiesList.innerHTML += abnormalities.map(ab => `
+            <div class="abnormality-item predicted">
+                <p>${ab.description} (What-If Prediction)</p>
+                <button onclick="dashboard.runScenario('weather_disruption')">Run What-If</button>
+            </div>
+        `).join('');
+    }
+    return;
+}
             const abnormalitiesList = document.getElementById('abnormalities-list');
             if (!abnormalitiesList) return;
             
@@ -575,6 +592,11 @@ class VyuhMitraDashboard {
                                                 <button class="btn btn-secondary" onclick="dashboard.rejectSolution('${trainNumber}')">
                                                     ❌ Reject
                                                 </button>
+                                            </div>
+                                            <div class="kpi-impact">
+                                                Throughput Increase: +${solution.kpi_impact?.throughput_increase || 0}%
+                                                Delay Reduction: ${solution.kpi_impact?.delay_reduction || 0}min
+                                                Safety: ${solution.kpi_impact?.safety_score || 90}%
                                             </div>
                                         </div>
                                     `).join('')}

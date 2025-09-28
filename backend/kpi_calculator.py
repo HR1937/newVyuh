@@ -132,7 +132,13 @@ class KPICalculator:
         efficiency_score = self._calculate_overall_efficiency_score(
             throughput_metrics, efficiency_metrics, safety_metrics, data_quality
         )
-
+        if section_data.get('status') == 'no_active_trains':
+            # Use history for predicted KPIs (motive: what-if on past)
+            predicted_throughput = len(static_schedules) / 24.0  # Base on static
+            predicted_delay = 10 if abnormalities else 0  # From history
+            throughput_metrics['predicted_throughput'] = round(predicted_throughput + (len(abnormalities) * 0.1),
+                                                               1)  # Simulate impact
+            efficiency_metrics['predicted_on_time'] = 85 if not abnormalities else 70
         kpi_data = {
             "section": section_name,
             "timestamp": timestamp,

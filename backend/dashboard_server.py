@@ -258,7 +258,7 @@ def run_optimization():
 
 
 @app.route('/api/optimize/scenario', methods=['POST'])
-def run_scenario_optimization():
+def run_scenario_optimization(self, section: str, scenario: str):
     """Run what-if scenario optimization"""
     try:
         scenario_data = request.json or {}
@@ -272,7 +272,9 @@ def run_scenario_optimization():
             globals()['current_section_data'] = section_data
 
         static_schedules = current_section_data.get("static_schedules", {})
-
+        historical_abnormalities = section_data.get('abnormalities', [])  # Includes predicted
+        optimization_result = optimizer.optimize_section_schedule(static_schedules, scenario=scenario,
+                                                                  historical_abnormalities=historical_abnormalities)
         if not static_schedules:
             return jsonify(create_api_response(True, {  # success True with message
                 "scenario": scenario,

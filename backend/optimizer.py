@@ -1,6 +1,6 @@
 import logging
 from ortools.sat.python import cp_model
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 
 from backend.config import Config
@@ -61,7 +61,7 @@ class TrainScheduleOptimizer:
         return logger
 
     def optimize_section_schedule(self, static_schedules: Dict, scenario: str = 'default',
-                                  extra_constraints: Dict = None) -> Dict:
+                                  extra_constraints: Dict = None, historical_abnormalities: List = []) -> Dict:
         self.logger.info(f"Starting optimization for scenario: {scenario}")
 
         valid_trains = {
@@ -76,7 +76,17 @@ class TrainScheduleOptimizer:
             }
 
         modified_schedules = self._apply_scenario(valid_trains, scenario)
-
+        if historical_abnormalities:
+            for ab in historical_abnormalities:
+                if ab.get('type') == 'predicted_delay':
+                    self.logger.info(f"Applying historical delay from {ab['description']}")
+                    for schedule in modified_schedules.values():
+                        # Simulate delay by shifting entry_time (assumes ISO format string)
+                        try:
+                            entry_time = datetime.fromisoformat(schedule['entry_time'].replace('Z', '+00:00'))
+                            schedule['entry_time'] = (entry_time + timedelta(minutes=10)).isoformat()  # Add 10min delay
+                        except (KeyError, ValueError) as e:
+                            self.logger.warning(f"Skipping invalid entry_time for schedule: {e}")
         model = cp_model.CpModel()
         solver = cp_model.CpSolver()
 
