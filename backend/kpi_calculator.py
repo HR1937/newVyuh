@@ -9,6 +9,76 @@ class KPICalculator:
         self.logger = self._setup_logger()
         self.kpi_history = []
 
+    def compute_current(self, section_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        section_data: {
+          section, static_schedules, live_movements, collected_at
+        }
+        """
+        try:
+            live: List[Dict[str, Any]] = section_data.get("live_movements", []) or []
+            now = datetime.utcnow()
+            one_hour_ago = now - timedelta(hours=1)
+
+            # If lastUpdatedAt available, use it to filter 'completed'
+            completed = 0
+            for x in live:
+                ts = x.get("lastUpdatedAt")
+                try:
+                    if ts and datetime.fromisoformat(str(ts).replace("Z", "+00:00")) >= one_hour_ago:
+                        completed += 1
+                except Exception:
+                    pass
+
+            throughput = float(completed)  # trains in last hour window
+            delays = [max(0, int(x.get("overall_delay_minutes", 0) or 0)) for x in live]
+            avg_delay = round(sum(delays) / len(delays), 1) if delays else 0.0
+
+            # Simple utilization proxy (bounded by headway-based capacity ~ 12 tph for 5-min headway)
+            capacity_tph = 60.0 / 5.0
+            utilization = min(100.0, (throughput / capacity_tph) * 100.0)
+            efficiency_score = round(max(0.0, 100.0 - avg_delay) * 0.75 + utilization * 0.25, 1)
+
+            result = {
+                "section": section_data.get("section"),
+                "timestamp": now.isoformat(),
+                "basic_stats": {
+                    "total_trains_scheduled": len(section_data.get("static_schedules", {})),
+                    "live_trains_tracked": len(live),
+                    "data_coverage_percentage": 100 if live else 0,
+                },
+                "throughput_metrics": {"planned_throughput_trains_per_hour": throughput},
+                "efficiency_metrics": {
+                    "on_time_performance_percentage": max(0.0, 100.0 - avg_delay),
+                    "average_delay_minutes": avg_delay,
+                    "schedule_reliability_score": efficiency_score,
+                },
+                "safety_metrics": {"safety_score": 100},
+                "infrastructure_metrics": {},
+                "ai_metrics": {},
+                "data_quality": {},
+                "optimization_impact": {"success": True, "impact_score": 0},
+                "efficiency_score": {"overall_score": efficiency_score,
+                                     "grade": "A" if efficiency_score >= 85 else "B" if efficiency_score >= 70 else "C" if efficiency_score >= 55 else "D"},
+            }
+            return result
+        except Exception as e:
+            logger.exception("KPI calculation error: %s", e)
+            return {
+                "section": section_data.get("section"),
+                "timestamp": datetime.utcnow().isoformat(),
+                "basic_stats": {"total_trains_scheduled": 0, "live_trains_tracked": 0, "data_coverage_percentage": 0},
+                "throughput_metrics": {"planned_throughput_trains_per_hour": 0},
+                "efficiency_metrics": {"on_time_performance_percentage": 0, "average_delay_minutes": 0,
+                                       "schedule_reliability_score": 0},
+                "safety_metrics": {"safety_score": 100},
+                "infrastructure_metrics": {},
+                "ai_metrics": {},
+                "data_quality": {},
+                "optimization_impact": {"success": False, "impact_score": 0},
+                "efficiency_score": {"overall_score": 0, "grade": "D"},
+            }
+
     def _setup_logger(self):
         logger = logging.getLogger('KPI_Calculator')
         logger.setLevel(logging.INFO)

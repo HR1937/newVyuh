@@ -283,7 +283,6 @@ class AIMLSolutionSystem:
         self.logger.info(f"Selected {len(ways)} ways for reason '{reason}'")
         return ways
 
-
     def optimize_solutions_with_cpsat(self, ways: List[Dict], abnormality: Dict) -> List[Dict]:
         """Use OR-Tools CP-SAT to optimize solutions from selected ways"""
         if not ways:

@@ -1336,3 +1336,87 @@ body {
     max-height: 400px;
     overflow-y: auto;
 }
+:root {
+  --bg: #0b0f14;
+  --fg: #e8edf2;
+  --muted: #94a3b8;
+  --accent: #0ea5e9; /* blue primary */
+  --danger: #ef4444;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, "Apple Color Emoji",
+    "Segoe UI Emoji";
+  background: var(--bg);
+  color: var(--fg);
+}
+
+header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #1f2937;
+}
+
+.main-layout {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh; /* contain full app */
+}
+
+.content {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  padding: 12px 16px;
+  overflow: hidden; /* contain scroll areas */
+}
+
+.section {
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 12px;
+  min-height: 0; /* allow children scroll */
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.section h2,
+.section h3 {
+  margin: 0 0 8px;
+  color: var(--fg);
+}
+
+.scroll {
+  overflow: auto;
+  min-height: 0;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.table th,
+.table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #1f2937;
+  text-align: left;
+}
+
+a,
+button {
+  color: var(--fg);
+}
+
+.alert {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #1f2937;
+  color: var(--fg);
+}
+.alert.error {
+  border: 1px solid var(--danger);
+}
