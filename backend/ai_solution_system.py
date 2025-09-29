@@ -9,6 +9,7 @@ from sklearn.model_selection import train_test_split
 import logging
 import uuid
 import requests
+import os
 
 class AIMLSolutionSystem:
     def __init__(self, config):
@@ -18,6 +19,10 @@ class AIMLSolutionSystem:
         self.solutions_db = []
         self.feedback_db = []
         self.applied_solutions = {}
+        # Optional Gemini API key from env or config
+        self.gemini_key = os.environ.get('GEMINI_API_KEY') or getattr(self.config, 'GEMINI_API_KEY', None)
+        # Allow forcing heuristic solver (no CP-SAT) to avoid native crashes
+        self.force_heuristic = bool(os.environ.get('FORCE_HEURISTIC_SOLVER', '')) or bool(getattr(self.config, 'FORCE_HEURISTIC_SOLVER', False))
 
     def _setup_logger(self):
         logger = logging.getLogger('AI_ML_System')
@@ -130,12 +135,28 @@ class AIMLSolutionSystem:
         return None
 
     def get_reason_for_abnormality(self, abnormality: Dict) -> str:
+        # If controller supplied a reason, use it strictly
+        provided = (abnormality or {}).get('reason')
+        if isinstance(provided, str) and provided.strip():
+            self.logger.info(f"Using provided reason from controller: {provided}")
+            return provided.strip()
+
         control_room_reason = self.ask_control_room_for_reason(abnormality)
 
         if control_room_reason:
             return control_room_reason
 
         ml_reason = self.infer_reason_with_ml(abnormality)
+
+        # Try Gemini to refine reason if available
+        if self.gemini_key:
+            try:
+                refined = self._gemini_refine_reason(ml_reason, abnormality)
+                if isinstance(refined, str) and refined.strip():
+                    self.logger.info(f"Gemini refined reason: {refined}")
+                    ml_reason = refined.strip()
+            except Exception as e:
+                self.logger.warning(f"Gemini reason refinement failed: {e}")
 
         suggested_options = [
             ml_reason,
@@ -167,6 +188,21 @@ class AIMLSolutionSystem:
                     "time_required": 30
                 }
             ])
+            # Passenger handling options
+            ways.extend([
+                {
+                    "type": "passenger_transfer",
+                    "description": f"Transfer passengers from {train_id} to a following service",
+                    "feasibility_score": 60,
+                    "time_required": 20
+                },
+                {
+                    "type": "attach_detach_coaches",
+                    "description": f"Attach relief coaches to accommodate affected passengers",
+                    "feasibility_score": 55,
+                    "time_required": 25
+                }
+            ])
 
         if reason in ["Track Obstruction", "Signal Issue", "Engineering Work"]:
             ways.extend([
@@ -183,6 +219,20 @@ class AIMLSolutionSystem:
                     "time_required": 25
                 }
             ])
+            ways.extend([
+                {
+                    "type": "block_section_management",
+                    "description": f"Temporarily adjust block section usage to clear obstruction",
+                    "feasibility_score": 70,
+                    "time_required": 10
+                },
+                {
+                    "type": "reserve_path_activation",
+                    "description": f"Activate contingency path pre-marked for disruptions",
+                    "feasibility_score": 65,
+                    "time_required": 15
+                }
+            ])
 
         if reason in ["Station Congestion", "Late Running of Connecting Train"]:
             ways.extend([
@@ -196,6 +246,32 @@ class AIMLSolutionSystem:
                     "type": "hold_at_station",
                     "description": f"Brief hold at {location} to clear congestion",
                     "feasibility_score": 85,
+                    "time_required": 10
+                }
+            ])
+            ways.extend([
+                {
+                    "type": "platform_reallocation",
+                    "description": f"Reallocate platform at next junction to avoid queue",
+                    "feasibility_score": 78,
+                    "time_required": 5
+                },
+                {
+                    "type": "use_loop_siding",
+                    "description": f"Move slower train into loop/siding to clear mainline",
+                    "feasibility_score": 82,
+                    "time_required": 8
+                },
+                {
+                    "type": "crossing_adjustment",
+                    "description": f"Adjust crossing point to station with better capacity",
+                    "feasibility_score": 74,
+                    "time_required": 12
+                },
+                {
+                    "type": "overtake_scheduling",
+                    "description": f"Schedule faster train to overtake slower at next loop",
+                    "feasibility_score": 76,
                     "time_required": 10
                 }
             ])
@@ -222,6 +298,22 @@ class AIMLSolutionSystem:
                 }
             ])
 
+        if reason in ["Weather Disruption", "Flooding", "Visibility"]:
+            ways.extend([
+                {
+                    "type": "emergency_diversion",
+                    "description": f"Weather-based diversion via safer section",
+                    "feasibility_score": 60,
+                    "time_required": 20
+                },
+                {
+                    "type": "dynamic_headway_adjustment",
+                    "description": f"Temporarily alter headway to maintain safe throughput",
+                    "feasibility_score": 68,
+                    "time_required": 0
+                }
+            ])
+
         if delay > 20:
             ways.append({
                 "type": "speed_adjustment",
@@ -229,6 +321,22 @@ class AIMLSolutionSystem:
                 "feasibility_score": 75,
                 "time_required": 0
             })
+
+        # General strategies applicable regardless of reason
+        ways.extend([
+            {
+                "type": "stagger_departures",
+                "description": f"Stagger departures upstream to smooth occupancy",
+                "feasibility_score": 65,
+                "time_required": 0
+            },
+            {
+                "type": "priority_rebalancing",
+                "description": f"Temporarily adjust precedence to improve throughput",
+                "feasibility_score": 70,
+                "time_required": 0
+            }
+        ])
 
         if not ways:
             ways = [
@@ -246,7 +354,8 @@ class AIMLSolutionSystem:
                 }
             ]
 
-        ways = sorted(ways, key=lambda x: x["feasibility_score"], reverse=True)[:3]
+        # If a controller provided a reason, bias toward higher feasibility but keep diversity
+        ways = sorted(ways, key=lambda x: x["feasibility_score"], reverse=True)[:5]
         self.logger.info(f"Selected {len(ways)} ways for reason '{reason}'")
         return ways
 
@@ -354,7 +463,30 @@ class AIMLSolutionSystem:
                 "reason": reason
             }
 
-        solutions = self.optimize_solutions_with_cpsat(ways, abnormality)
+        # Choose solver strategy
+        solutions: List[Dict]
+        if self.force_heuristic:
+            self.logger.info("Using heuristic solver (FORCE_HEURISTIC_SOLVER enabled)")
+            solutions = self._heuristic_solutions(ways, abnormality)
+        else:
+            solutions = self.optimize_solutions_with_cpsat(ways, abnormality)
+            if not solutions:
+                # Fallback to heuristic if CP-SAT fails or returns empty
+                self.logger.warning("CP-SAT returned no solutions; falling back to heuristic solver")
+                solutions = self._heuristic_solutions(ways, abnormality)
+
+        # Optionally enrich each solution with a short narrative using Gemini
+        if self.gemini_key and solutions:
+            try:
+                for s in solutions:
+                    try:
+                        s["narrative"] = self._gemini_solution_narrative(reason, s, abnormality) or ""
+                    except Exception as e:
+                        # Ensure one failure doesn't break others
+                        s["narrative"] = ""
+                self.logger.info("Added AI narratives to solutions")
+            except Exception as e:
+                self.logger.warning(f"Gemini narratives failed: {e}")
 
         if not solutions:
             return {
@@ -384,6 +516,99 @@ class AIMLSolutionSystem:
 
         self.logger.info(f"✅ Generated {len(solutions)} solutions for train {train_id}")
         return result
+
+    # ----- Heuristic fallback (pure Python, safe) -----
+    def _heuristic_solutions(self, ways: List[Dict], abnormality: Dict) -> List[Dict]:
+        try:
+            train_id = abnormality.get('train_id')
+            delay = int(abnormality.get('delay_minutes') or 0)
+            out: List[Dict] = []
+            for way in ways[:5]:
+                base_throughput = 70 if way['type'] in ('speed_adjustment','change_track','overtake_scheduling') else 55
+                base_safety = 90 if way['type'] in ('hold_at_station','replace_train','change_track') else 80
+                time_rec = 10 if way['type'] in ('speed_adjustment','overtake_scheduling') else -min(way.get('time_required', 10), delay)
+
+                for variant in (0, 1):
+                    sol = {
+                        "solution_id": str(uuid.uuid4()),
+                        "train_id": train_id,
+                        "way_type": way["type"],
+                        "description": f"{way['description']} (Option {variant+1})",
+                        "throughput_score": max(1, base_throughput - variant * 5),
+                        "safety_score": max(1, base_safety - variant * 2),
+                        "time_recovery_minutes": time_rec - variant * 3,
+                        "feasibility_score": max(1, int(way.get('feasibility_score', 70)) - variant * 3),
+                        "implementation_time": int(way.get('time_required', 10)) + variant * 5,
+                        "priority_score": (base_throughput*0.4 + base_safety*0.5 + (time_rec+60)*0.1) - variant*10,
+                        "kpi_impact": {
+                            "throughput_change": (base_throughput)/100,
+                            "efficiency_change": (base_throughput + base_safety)/200,
+                            "delay_reduction": max(0, time_rec)
+                        }
+                    }
+                    out.append(sol)
+            out = sorted(out, key=lambda x: x["priority_score"], reverse=True)[:4]
+            return out
+        except Exception as e:
+            self.logger.error(f"Heuristic solution generation failed: {e}")
+            return []
+
+    # ----- Optional Gemini helpers (safe fallbacks) -----
+    def _gemini_refine_reason(self, ml_reason: str, abnormality: Dict) -> Optional[str]:
+        """Attempt to refine reason using Gemini; fall back silently on failure."""
+        try:
+            prompt = (
+                "You are assisting a rail traffic controller. Based on the following context, "
+                "refine the single best short reason for the abnormality (max 4 words).\n"
+                f"ML reason: {ml_reason}\n"
+                f"Abnormality: {json.dumps({k: v for k, v in abnormality.items() if k in ['train_id','type','severity','delay_minutes','location','status']})}"
+            )
+            text = self._gemini_generate_text(prompt)
+            if not text:
+                return ml_reason
+            # Take first line, strip emojis/excess
+            return text.splitlines()[0][:60].strip()
+        except Exception as e:
+            self.logger.warning(f"Gemini refine error: {e}")
+            return ml_reason
+
+    def _gemini_solution_narrative(self, reason: str, solution: Dict, abnormality: Dict) -> str:
+        try:
+            prompt = (
+                "Write a one-sentence operational rationale for the following rail solution. "
+                "Avoid marketing language; be precise and safety-aware.\n"
+                f"Reason: {reason}\n"
+                f"Solution: {json.dumps({k: solution[k] for k in ['way_type','description','implementation_time'] if k in solution})}\n"
+                f"Context: {json.dumps({k: abnormality.get(k) for k in ['train_id','delay_minutes','location','severity']})}"
+            )
+            return self._gemini_generate_text(prompt)[:240]
+        except Exception as e:
+            self.logger.warning(f"Gemini narrative error: {e}")
+            return ""
+
+    def _gemini_generate_text(self, prompt: str) -> str:
+        """Minimal HTTP call to Gemini; returns text or empty string. Safe on failure."""
+        try:
+            import requests
+            # Public REST for generative language API (v1beta), using a lightweight model
+            base = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+            params = {"key": self.gemini_key}
+            payload = {"contents": [{"parts": [{"text": prompt}]}]}
+            resp = requests.post(base, params=params, json=payload, timeout=8)
+            if resp.status_code != 200:
+                raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+            data = resp.json()
+            # Extract first text candidate
+            candidates = data.get("candidates") or []
+            if not candidates:
+                return ""
+            parts = (candidates[0].get("content") or {}).get("parts") or []
+            if parts and isinstance(parts[0], dict):
+                return parts[0].get("text", "")
+            return ""
+        except Exception as e:
+            self.logger.warning(f"Gemini request failed: {e}")
+            return ""
 
     def handle_solution_feedback(self, solution_id: str, action: str, train_id: str,
                                 reason: str = None, controller_id: str = None) -> Dict:

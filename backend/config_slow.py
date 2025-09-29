@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 
 class Config:
-    """Fast configuration for VyuhMitra system with REAL live data and reduced rate limits"""
+    """Complete configuration for VyuhMitra system with REAL live data"""
     
     # RailRadar API Configuration - REAL WORKING KEY
     RAILRADAR_API_KEY = "rr_live_ccW7ci-7ty2l8DR_yceDZjpJf9PaIPKg"  # REAL working key from text.py
@@ -45,8 +45,8 @@ class Config:
     DASHBOARD_PORT = 5000
     DASHBOARD_DEBUG = True
     
-    # Rate limiting - MUCH FASTER for responsive UI
-    RAILRADAR_MIN_REQUEST_INTERVAL = 30  # Reduced from 120 to 30 seconds for faster responses
+    # Rate limiting - REDUCED for more real-time data
+    RAILRADAR_MIN_REQUEST_INTERVAL = 60  # Reduced from 120 to get more live updates
     
     # Demo data control - DISABLED by default for REAL data
     ENABLE_DEMO = os.environ.get('ENABLE_DEMO', '0') == '1'

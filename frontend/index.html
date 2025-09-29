@@ -4,11 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VyuhMitra - AI-Powered Train Traffic Control Dashboard</title>
+    <link rel="icon" href="/favicon.ico">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/dashboard.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
-<body>
+<body class="dark-theme">
     <div class="dashboard-container">
         <!-- Header Section -->
         <header class="dashboard-header">
@@ -113,7 +117,7 @@
                 </div>
 
                 <!-- Table View -->
-                <div id="table-view" class="schedule-view">
+                <div id="table-view" class="schedule-view" hidden>
                     <div class="table-wrapper">
                         <table id="trainTable" class="data-table">
                             <thead>
@@ -321,7 +325,7 @@
                     <strong>VyuhMitra v2.0</strong> | AI-Powered Train Traffic Control
                 </div>
                 <div class="footer-section">
-                    Smart India Hackathon 2024 | Ministry of Railways
+                    Smart India Hackathon 2025 | Ministry of Railways
                 </div>
                 <div class="footer-section">
                     <span id="system-uptime">Uptime: --:--:--</span>
@@ -342,6 +346,7 @@
             </div>
             <div class="modal-footer">
                 <button id="modal-accept" class="accept-btn">✅ Accept Solution</button>
+                <button id="modal-adjust-accept" class="accept-btn">✏️ Adjust & Accept</button>
                 <button id="modal-reject" class="reject-btn">❌ Reject Solution</button>
                 <button id="modal-close" class="cancel-btn">Cancel</button>
             </div>

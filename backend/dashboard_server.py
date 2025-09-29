@@ -20,6 +20,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('DashboardServer')
 
 config = Config()
+logger.info(f"🔧 Config loaded: {config.DEFAULT_FROM_STATION} → {config.DEFAULT_TO_STATION}")
+logger.info(f"🔧 Demo mode: {getattr(config, 'ENABLE_DEMO', 'Not set')}")
 data_collector = RailRadarDataCollector(config.RAILRADAR_API_KEY)
 ai_system = AIMLSolutionSystem(config)
 optimizer = TrainScheduleOptimizer(config.MIN_HEADWAY_MINUTES)
@@ -168,11 +170,39 @@ def generate_solutions():
     global active_solutions
 
     try:
-        abnormality = request.json
-        if not abnormality:
-            return jsonify(create_api_response(False, error="No abnormality data provided")), 400
+        abnormality = request.json or {}
+        train_id = abnormality.get('train_id') or abnormality.get('train_number')
+        if not train_id:
+            return jsonify(create_api_response(False, error="Missing train_id")), 400
 
-        logger.info(f"Processing abnormality for train {abnormality.get('train_id', 'unknown')}")
+        # Synthesize defaults if not provided
+        if 'type' not in abnormality:
+            abnormality['type'] = 'delay'
+        if 'severity' not in abnormality:
+            abnormality['severity'] = 'medium'
+        if 'section' not in abnormality:
+            abnormality['section'] = f"{config.DEFAULT_FROM_STATION}-{config.DEFAULT_TO_STATION}"
+        # Provide mandatory safe defaults required downstream
+        abnormality.setdefault('delay_minutes', 0)
+        abnormality.setdefault('detected_at', datetime.now().isoformat())
+        # Ensure a location is present (use section as fallback)
+        abnormality.setdefault('location', abnormality.get('location') or abnormality.get('section') or 'Unknown')
+
+        # Try to enrich with live delay if available
+        try:
+            journey_date = data_collector.get_running_journey_date(train_id)
+            live = data_collector.fetch_train_live_status(train_id, journey_date) if journey_date else None
+            if isinstance(live, dict):
+                abnormality.setdefault('delay_minutes', live.get('overallDelayMinutes') or 0)
+                abnormality.setdefault('status', live.get('statusSummary') or (live.get('currentLocation') or {}).get('status'))
+        except Exception as e:
+            logger.warning(f"Could not enrich abnormality with live data: {e}")
+
+        # Final guard to avoid KeyError in AI layer
+        if 'delay_minutes' not in abnormality or abnormality['delay_minutes'] is None:
+            abnormality['delay_minutes'] = 0
+
+        logger.info(f"Generating solutions for train {train_id} with abnormality: {abnormality}")
 
         result = ai_system.process_abnormality(abnormality)
 
@@ -213,25 +243,34 @@ def submit_solution_feedback():
     global active_solutions
 
     try:
-        feedback_data = request.json
-        required_fields = ['solution_id', 'action', 'train_id']
+        feedback_data = request.json or {}
+        # Accept either 'action' or 'decision' from frontend; 'train_id' optional (inferable)
+        action = feedback_data.get('action') or feedback_data.get('decision')
+        solution_id = feedback_data.get('solution_id')
+        train_id = feedback_data.get('train_id')
+        if not train_id and solution_id:
+            # Try to infer train_id from active_solutions
+            for s in active_solutions:
+                if s.get('solution_id') == solution_id:
+                    train_id = s.get('train_id') or s.get('train_number')
+                    break
 
-        if not all(field in feedback_data for field in required_fields):
-            return jsonify(create_api_response(False, error="Missing required fields")), 400
+        if not (solution_id and action and train_id):
+            return jsonify(create_api_response(False, error="Missing required fields (need solution_id, action/decision, train_id)")), 400
 
         logger.info(f"Processing {feedback_data['action']} for solution {feedback_data['solution_id']}")
 
         result = ai_system.handle_solution_feedback(
-            feedback_data['solution_id'],
-            feedback_data['action'],
-            feedback_data['train_id'],
+            solution_id,
+            action,
+            train_id,
             feedback_data.get('reason', ''),
             feedback_data.get('controller_id', 'dashboard_user')
         )
 
-        active_solutions = [s for s in active_solutions if s['solution_id'] != feedback_data['solution_id']]
+        active_solutions = [s for s in active_solutions if s.get('solution_id') != solution_id]
 
-        logger.info(f"Solution {feedback_data['action']} processed successfully")
+        logger.info(f"Solution {action} processed successfully for train {train_id}")
 
         return jsonify(create_api_response(True, result))
 
@@ -580,21 +619,34 @@ def get_train_schedules():
 
         schedule_list = []
         for train_id, schedule in static_schedules.items():
-            live_info = live_data.get(train_id, {})
+            live_info = live_data.get(train_id, {}) or {}
+
+            delay_minutes = 0
+            status_label = "Scheduled"
+            current_location = "Scheduled"
+            if live_info:
+                # RailRadar live format
+                delay_minutes = live_info.get('overallDelayMinutes') or \
+                                live_info.get('overall_delay_minutes') or 0
+                status_label = live_info.get('statusSummary') or \
+                               (live_info.get('currentLocation') or {}).get('status') or 'Live'
+                loc = live_info.get('currentLocation') or {}
+                current_location = loc.get('stationCode') or loc.get('status') or 'In Transit'
 
             schedule_item = {
                 "train_id": train_id,
                 "train_name": schedule.get("train_name", "Unknown"),
                 "static_entry": schedule.get("entry_time", 0),
                 "static_exit": schedule.get("exit_time", 0),
-                "optimized_entry": schedule.get("entry_time", 0),
-                "optimized_exit": schedule.get("exit_time", 0),
-                "deviation": 0,
+                # If delayed, reflect delay on optimized_entry to show deviation visually
+                "optimized_entry": schedule.get("entry_time", 0) + int(delay_minutes),
+                "optimized_exit": schedule.get("exit_time", 0) + int(delay_minutes),
+                "deviation": int(delay_minutes),
                 "platform": schedule.get("entry_platform", "TBD"),
-                "status": "Live" if live_info else "Scheduled",
-                "delay_minutes": live_info.get("overallDelayMinutes", 0) if live_info else 0,
+                "status": status_label,
+                "delay_minutes": int(delay_minutes),
                 "journey_date": schedule.get("journey_date", datetime.now().strftime("%Y-%m-%d")),
-                "current_location": live_info.get("current_station", "In Transit") if live_info else "Scheduled"
+                "current_location": current_location
             }
             schedule_list.append(schedule_item)
 
@@ -629,6 +681,31 @@ def get_system_status():
 
     except Exception as e:
         logger.error(f"System status error: {e}")
+        return jsonify(create_api_response(False, error=str(e))), 500
+
+@app.route('/api/train/<train_id>/details')
+def get_train_details(train_id):
+    try:
+        logger.info(f"Fetching details for train {train_id}")
+        # Determine journey date if possible
+        journey_date = data_collector.get_running_journey_date(train_id) or datetime.now().strftime("%Y-%m-%d")
+        live = data_collector.fetch_train_live_status(train_id, journey_date) or {}
+        sched = data_collector.fetch_train_schedule(train_id, journey_date) or {}
+
+        # Shape a concise payload the UI can render
+        details = {
+            "train_id": train_id,
+            "journey_date": journey_date,
+            "status": live.get("statusSummary") or (live.get("currentLocation") or {}).get("status") or "Unknown",
+            "overall_delay_minutes": live.get("overallDelayMinutes") or 0,
+            "last_updated": live.get("lastUpdatedAt"),
+            "current_location": (live.get("currentLocation") or {}).get("stationCode"),
+            "route": (live.get("route") or []) if isinstance(live.get("route"), list) else (sched.get("route") or []),
+            "train": sched.get("train") or {},
+        }
+        return jsonify(create_api_response(True, details))
+    except Exception as e:
+        logger.error(f"Error getting train details: {e}")
         return jsonify(create_api_response(False, error=str(e))), 500
 
 @app.route('/api/system/refresh', methods=['POST'])
@@ -671,6 +748,11 @@ def internal_error(error):
 def handle_exception(e):
     logger.error(f"Unhandled exception: {e}")
     return jsonify(create_api_response(False, error=f"Unexpected error: {str(e)}")), 500
+
+@app.route('/favicon.ico')
+def favicon_inline():
+    # Avoid 404 noise for browsers requesting favicon
+    return ('', 204)
 
 if __name__ == '__main__':
     os.makedirs("data/schedules", exist_ok=True)

@@ -17,7 +17,8 @@ class RailRadarDataCollector:
         self.headers = {"x-api-key": api_key}
         self.cache = {}
         self.last_request_time = {}
-        self.min_request_interval = 120  # 2 minutes in seconds
+        # Allow overriding rate limit window for development
+        self.min_request_interval = int(os.environ.get('RAILRADAR_MIN_REQUEST_INTERVAL', '120'))  # seconds
         self.logger = self._setup_logger()
 
     def _setup_logger(self):
@@ -29,6 +30,28 @@ class RailRadarDataCollector:
             handler.setFormatter(formatter)
             logger.addHandler(handler)
         return logger
+
+    # --- Normalization helpers ---
+    def _extract_trains_array(self, payload) -> List[Dict]:
+        """Given any response shape from RailRadar 'trains/between', return a list of train dicts.
+        Accepts shapes like {trains:[...]}, {data:{trains:[...]}}, {data:[...]}, or already a list.
+        Any non-dict items are filtered out.
+        """
+        trains: List[Dict] = []
+        try:
+            if isinstance(payload, list):
+                trains = [t for t in payload if isinstance(t, dict)]
+            elif isinstance(payload, dict):
+                if isinstance(payload.get('trains'), list):
+                    trains = [t for t in payload['trains'] if isinstance(t, dict)]
+                elif isinstance(payload.get('data'), dict) and isinstance(payload['data'].get('trains'), list):
+                    trains = [t for t in payload['data']['trains'] if isinstance(t, dict)]
+                elif isinstance(payload.get('data'), list):
+                    trains = [t for t in payload['data'] if isinstance(t, dict)]
+        except Exception as e:
+            self.logger.warning(f"Normalization failed, returning empty trains list: {e}")
+            trains = []
+        return trains
 
     def _should_use_cache(self, cache_key: str) -> tuple:
         if cache_key in self.cache:
@@ -117,18 +140,16 @@ class RailRadarDataCollector:
                 self.logger.warning(f"API error: {data['error']}")
                 return []
 
-            # Handle direct response format from RailRadar API
-            if isinstance(data, dict):
-                if "trains" in data:
-                    trains_list = data["trains"]
-                elif "data" in data:
-                    trains_list = data["data"]
-                else:
-                    trains_list = []
-            else:
-                trains_list = []
+            # Normalize any response shape to a list of train dicts
+            trains_list: List[Dict] = self._extract_trains_array(data)
 
-            self.logger.info(f"Found {len(trains_list)} trains for section")
+            # Log shape for diagnostics
+            try:
+                shape = type(trains_list).__name__
+                sample_keys = list(trains_list[0].keys())[:5] if isinstance(trains_list, list) and trains_list else []
+                self.logger.info(f"Found {len(trains_list)} trains for section (shape={shape}, sample_keys={sample_keys})")
+            except Exception:
+                self.logger.info(f"Found {len(trains_list)} trains for section (shape=unknown)")
             return trains_list
 
         except Exception as e:
@@ -322,6 +343,9 @@ class RailRadarDataCollector:
             self.logger.info("Attempting to fetch real train data from API")
             trains_list = self.fetch_section_trains(from_station, to_station)
             
+            # Safety: always normalize again here
+            trains_list = self._extract_trains_array(trains_list)
+
             if not trains_list:
                 self.logger.warning("No trains found from API, falling back to static schedules")
                 static_schedules = self._load_static_schedules()
@@ -329,32 +353,85 @@ class RailRadarDataCollector:
                 self.logger.info(f"Found {len(trains_list)} trains from API")
                 # Process the trains list into static schedules format
                 static_schedules = {}
+                live_data_map = {}
                 for train in trains_list:
-                    train_id = train.get("number") or train.get("train_id")
-                    if train_id:
-                        self.logger.info(f"Processing train {train_id}")
-                        static_schedules[train_id] = {
-                            "train_name": train.get("name", "Unknown"),
-                            "entry_time": self._parse_time_to_minutes(train.get("departure", "06:00")),
-                            "exit_time": self._parse_time_to_minutes(train.get("arrival", "07:00")),
-                            "entry_platform": train.get("platform", "1"),
-                            "journey_date": train.get("journey_date", datetime.now().strftime("%Y-%m-%d"))
-                        }
-                        
-                        # Try to fetch live status for this train
+                    # Some providers may return simple strings; skip non-dicts safely
+                    if not isinstance(train, dict):
+                        self.logger.warning(f"Skipping non-dict train item: {str(train)[:50]}")
+                        continue
+
+                    # RailRadar trains/between model hints:
+                    # number, name, source{code,name}, destination{...},
+                    # journeySegment: { from{...}, to{...}, departureTime, arrivalTime }
+                    train_id = train.get("number") or train.get("train_id") or train.get("train_number")
+                    if not train_id:
+                        # try nested structure fallback
+                        tinfo = train.get("train") if isinstance(train.get("train"), dict) else {}
+                        train_id = tinfo.get("number")
+                    if not train_id:
+                        self.logger.warning("Skipping train without 'number'")
+                        continue
+                    self.logger.info(f"Processing train {train_id}")
+
+                    seg = train.get("journeySegment") or train.get("journey_segment") or {}
+                    dep_str = None
+                    arr_str = None
+                    if isinstance(seg, dict):
+                        dep_str = seg.get("departureTime") or seg.get("departure_time")
+                        arr_str = seg.get("arrivalTime") or seg.get("arrival_time")
+                    dep_str = dep_str or train.get("departure") or "06:00"
+                    arr_str = arr_str or train.get("arrival") or "07:00"
+
+                    tname = train.get("name") or train.get("train_name")
+                    if not tname and isinstance(train.get("train"), dict):
+                        tname = train["train"].get("name")
+
+                    static_schedules[train_id] = {
+                        "train_name": tname or "Unknown",
+                        "entry_time": self._parse_time_to_minutes(dep_str),
+                        "exit_time": self._parse_time_to_minutes(arr_str),
+                        "entry_platform": train.get("platform", "TBD"),
+                        "journey_date": train.get("journey_date", datetime.now().strftime("%Y-%m-%d"))
+                    }
+
+                    # Try to fetch live status for this train and store it
+                    try:
                         journey_date = self.get_running_journey_date(train_id)
                         if journey_date:
                             self.logger.info(f"Fetching live status for train {train_id} on {journey_date}")
-                            live_data = self.fetch_train_live_status(train_id, journey_date)
-                            if live_data:
-                                self.logger.info(f"Live data found for train {train_id}")
+                            live = self.fetch_train_live_status(train_id, journey_date)
+                            if isinstance(live, dict) and live:
+                                live_data_map[train_id] = live
+                                self.logger.info(f"✅ Live data stored for train {train_id}")
                             else:
-                                self.logger.warning(f"No live data found for train {train_id}")
+                                self.logger.warning(f"No live data for train {train_id}")
+                    except Exception as e:
+                        self.logger.warning(f"Live fetch failed for {train_id}: {e}")
             
-            # If we still don't have any schedules, use demo data
+            # If we still don't have any schedules, check if demo is enabled
             if not static_schedules:
-                self.logger.warning("No static schedules found, using demo data")
-                return self._create_demo_data(from_station, to_station)
+                self.logger.warning("No static schedules found")
+                # Demo data is OFF by default, only enabled if ENABLE_DEMO=1 is set
+                use_demo = bool(os.environ.get('ENABLE_DEMO', '')) or bool(getattr(self.config, 'ENABLE_DEMO', False))
+                
+                self.logger.info(f"🔧 Data Collection Mode: {'DEMO' if use_demo else 'LIVE'}")
+                self.logger.info(f"🚉 Section: {from_station} → {to_station}")
+                
+                if use_demo:
+                    self.logger.info("Using demo data as fallback")
+                    return self._create_demo_data(from_station, to_station)
+                else:
+                    self.logger.info("Demo disabled; returning empty payload")
+                    return {
+                        "section": f"{from_station}-{to_station}",
+                        "from_station": from_station,
+                        "to_station": to_station,
+                        "static_schedules": {},
+                        "valid_schedules": 0,
+                        "abnormalities": [],
+                        "timestamp": datetime.now().isoformat(),
+                        "data_source": "none"
+                    }
                 
             # Detect abnormalities in the section
             section = f"{from_station}-{to_station}"
@@ -371,14 +448,35 @@ class RailRadarDataCollector:
                 "timestamp": datetime.now().isoformat(),
                 "data_source": "api" if trains_list else "static"
             }
+            # attach live_data if present (either from API or demo)
+            try:
+                if 'live_data' in locals() and isinstance(live_data, dict):
+                    result["live_data"] = live_data
+                elif 'live_data_map' in locals() and live_data_map:
+                    result["live_data"] = live_data_map
+            except Exception:
+                pass
             
             self.logger.info(f"Collected data for section {section} with {len(static_schedules)} trains and {len(abnormalities)} abnormalities")
             return result
 
         except Exception as e:
             self.logger.error(f"Error collecting section data: {e}")
-            self.logger.info("Falling back to demo data due to error")
-            return self._create_demo_data(from_station, to_station)
+            # Demo only if explicitly enabled
+            if os.environ.get('ENABLE_DEMO', ''):
+                self.logger.info("Falling back to demo data due to error (unset ENABLE_DEMO to prevent)")
+                return self._create_demo_data(from_station, to_station)
+            self.logger.info("Demo disabled; returning empty payload on error")
+            return {
+                "section": f"{from_station}-{to_station}",
+                "from_station": from_station,
+                "to_station": to_station,
+                "static_schedules": {},
+                "valid_schedules": 0,
+                "abnormalities": [],
+                "timestamp": datetime.now().isoformat(),
+                "data_source": "error"
+            }
 
     def _load_static_schedules(self) -> Dict:
         try:

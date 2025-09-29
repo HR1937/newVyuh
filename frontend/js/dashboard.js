@@ -23,6 +23,7 @@ class VyuhMitraDashboard {
             
             this.setupEventListeners();
             this.initializeCharts();
+            this.setupScenarioHandlers();
             
             await this.loadInitialData();
             
@@ -96,6 +97,9 @@ class VyuhMitraDashboard {
         if (timelineView && tableView) {
             timelineView.classList.remove('active');
             tableView.classList.add('active');
+            // Ensure only table is visible for screen readers and layout
+            timelineView.setAttribute('hidden', 'true');
+            tableView.removeAttribute('hidden');
             console.log('🔍 [DEBUG] Views switched successfully');
             console.log('🔍 [DEBUG] Timeline view classes:', timelineView.className);
             console.log('🔍 [DEBUG] Table view classes:', tableView.className);
@@ -119,6 +123,25 @@ class VyuhMitraDashboard {
         }
         
         console.log('🔍 [DEBUG] Table view should now be visible');
+    }
+    
+    switchToTimelineView() {
+        console.log('🔍 [DEBUG] Switching to timeline view...');
+        const timelineView = document.getElementById('timeline-view');
+        const tableView = document.getElementById('table-view');
+        const timelineBtn = document.querySelector('[data-view="timeline"]');
+        const tableBtn = document.querySelector('[data-view="table"]');
+        if (timelineView && tableView) {
+            tableView.classList.remove('active');
+            timelineView.classList.add('active');
+            // Ensure only timeline is visible
+            tableView.setAttribute('hidden', 'true');
+            timelineView.removeAttribute('hidden');
+        }
+        if (timelineBtn && tableBtn) {
+            tableBtn.classList.remove('active');
+            timelineBtn.classList.add('active');
+        }
     }
     
     async refreshData() {
@@ -440,6 +463,8 @@ class VyuhMitraDashboard {
                 `${efficiencyScore.overall_score || 0}%`);
             
             this.updateCharts(kpiData);
+            // Save last KPI snapshot for What-If baseline
+            this._lastKpi = data && data.kpi_data ? data : { kpi_data: kpiData };
             
         } catch (error) {
             console.error('❌ Error updating KPIs:', error);
@@ -466,6 +491,8 @@ class VyuhMitraDashboard {
             
             const scheduleData = data.schedule_data || data || [];
             console.log('🔍 [DEBUG] Schedule data:', scheduleData);
+            // cache for simulation and timeline
+            this._scheduleCache = Array.isArray(scheduleData) ? scheduleData : [];
             
             if (!scheduleData || scheduleData.length === 0) {
                 console.log('🔍 [DEBUG] No schedule data available');
@@ -572,6 +599,21 @@ class VyuhMitraDashboard {
                     this.refreshData();
                 });
             }
+            // View toggles
+            const timelineBtn = document.getElementById('schedule-view-btn');
+            const tableBtn = document.getElementById('table-view-btn');
+            if (timelineBtn) timelineBtn.addEventListener('click', () => this.switchToTimelineView());
+            if (tableBtn) tableBtn.addEventListener('click', () => this.switchToTableView());
+            // Quick simulate button in schedule controls
+            const simulateBtn = document.getElementById('simulation-btn');
+            if (simulateBtn) simulateBtn.addEventListener('click', () => this.startSimulation());
+            // Simulation panel controls
+            const playBtn = document.getElementById('play-simulation');
+            const pauseBtn = document.getElementById('pause-simulation');
+            const resetBtn = document.getElementById('reset-simulation');
+            if (playBtn) playBtn.addEventListener('click', () => this.startSimulation());
+            if (pauseBtn) pauseBtn.addEventListener('click', () => this.pauseSimulation());
+            if (resetBtn) resetBtn.addEventListener('click', () => this.resetSimulation());
             console.info('[UI] Event listeners set up');
         } catch (e) {
             console.error('[UI] setupEventListeners error', e);
@@ -658,9 +700,75 @@ class VyuhMitraDashboard {
 
     updateActiveSolutions(data) {
         try {
-            const count = (data && data.count) || (data && data.solutions && data.solutions.length) || 0;
-            const el = document.getElementById('active-solutions-count');
-            if (el) el.textContent = String(count);
+            const solutions = (data && data.solutions) || [];
+            const count = data && typeof data.count === 'number' ? data.count : solutions.length;
+            const countEl = document.getElementById('active-solutions-count');
+            if (countEl) countEl.textContent = String(count);
+
+            const list = document.getElementById('solutions-list');
+            if (!list) return;
+
+            if (!solutions.length) {
+                list.innerHTML = `
+                    <div class="no-solutions">
+                        <div class="ai-icon">🧠</div>
+                        <p>AI monitoring for optimal solutions...</p>
+                    </div>`;
+                return;
+            }
+            // Normalize backend fields to UI metrics
+            list.innerHTML = solutions.map((s, idx) => {
+                const title = s.title || s.name || s.way_type || `Solution #${idx + 1}`;
+                const desc = s.description || s.narrative || 'No description provided';
+                const prio = (s.priority || (s.feasibility_score >= 80 ? 'high' : s.feasibility_score >= 65 ? 'medium' : 'low')).toLowerCase();
+                const metrics = s.metrics || {};
+                const throughput = (metrics.throughput_gain_per_hour ?? metrics.throughput_gain ?? s.kpi_impact?.throughput_change ?? 0);
+                const delay = (metrics.delay_reduction_minutes ?? metrics.delay_reduction ?? Math.max(0, s.time_recovery_minutes ?? 0));
+                const safety = (metrics.safety_score ?? metrics.risk_score ?? s.safety_score ?? 0);
+                const id = s.id || s.solution_id || `sol_${idx}`;
+                return `
+                    <div class="solution-item" data-solution-id="${id}">
+                        <div class="solution-header">
+                            <div class="solution-title">${title}</div>
+                            <div class="solution-priority ${prio}">${prio.toUpperCase()}</div>
+                        </div>
+                        <div class="solution-details">${desc}</div>
+                        <div class="solution-metrics">
+                            <div class="solution-metric">
+                                <div class="solution-metric-value">+${Number(throughput).toFixed(2)}</div>
+                                <div class="solution-metric-label">Trains/Hr</div>
+                            </div>
+                            <div class="solution-metric">
+                                <div class="solution-metric-value">-${Number(delay).toFixed(1)}m</div>
+                                <div class="solution-metric-label">Avg Delay</div>
+                            </div>
+                            <div class="solution-metric">
+                                <div class="solution-metric-value">${Number(safety).toFixed(0)}%</div>
+                                <div class="solution-metric-label">Safety Score</div>
+                            </div>
+                        </div>
+                        <div class="solution-actions">
+                            <button class="accept-btn" data-action="accept" data-solution-id="${id}">✅ Accept</button>
+                            <button class="reject-btn" data-action="reject" data-solution-id="${id}">❌ Reject</button>
+                            <button class="view-details-btn" data-action="adjust" data-solution-id="${id}">✏️ Adjust</button>
+                        </div>
+                    </div>`;
+            }).join('');
+
+            // Wire buttons
+            list.querySelectorAll('[data-action]')
+                .forEach(btn => btn.addEventListener('click', (e) => {
+                    const action = e.currentTarget.getAttribute('data-action');
+                    const solutionId = e.currentTarget.getAttribute('data-solution-id');
+                    const card = e.currentTarget.closest('.solution-item');
+                    const title = card?.querySelector('.solution-title')?.textContent || 'Solution Details';
+                    if (action === 'adjust') {
+                        this.openSolutionModal(solutionId, title, card?.outerHTML || '');
+                    } else {
+                        this.submitSolutionFeedback({ solution_id: solutionId, decision: action });
+                    }
+                }));
+
         } catch (e) {
             console.error('[UI] updateActiveSolutions error', e);
         }
@@ -669,21 +777,361 @@ class VyuhMitraDashboard {
     async generateSolutions(trainNumber) {
         try {
             console.info('[UI] generateSolutions', trainNumber);
-            const res = await fetch(`${this.apiBaseUrl}/solutions/generate`, {
+            // Prompt for optional reason from controller; empty means let ML infer
+            let reason = '';
+            try { reason = window.prompt('Optional: provide reason for delay/issue (leave blank to let AI infer):', '') || ''; } catch(_) {}
+            // Disable duplicate clicks during request
+            const disable = (on) => { try { document.querySelectorAll('[onclick*="generateSolutions"]').forEach(b => b.disabled = !!on); } catch(_) {} };
+            disable(true);
+            const payload = { train_id: trainNumber };
+            if (reason.trim()) payload.reason = reason.trim();
+            await this.fetchWithRetry('/api/solutions/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ train_id: trainNumber })
-            });
-            const body = await res.text();
-            console.info('[UI] generateSolutions response', res.status, body.slice(0, 300));
+                body: JSON.stringify(payload)
+            }, 20000);
+            console.info('[UI] generateSolutions response OK');
+            // Refresh active solutions list after generation
+            await this.refreshSpecific('solutions');
+            // Wire buttons
+            const list = document.getElementById('solutions-list');
+            if (list) {
+                list.querySelectorAll('[data-action]')
+                    .forEach(btn => btn.addEventListener('click', (e) => {
+                        const action = e.currentTarget.getAttribute('data-action');
+                        const solutionId = e.currentTarget.getAttribute('data-solution-id');
+                        const card = e.currentTarget.closest('.solution-item');
+                        const title = card?.querySelector('.solution-title')?.textContent || 'Solution Details';
+                        if (action === 'adjust') {
+                            this.openSolutionModal(solutionId, title, card?.outerHTML || '');
+                        } else {
+                            this.submitSolutionFeedback({ solution_id: solutionId, decision: action });
+                        }
+                    }));
+            }
+            disable(false);
         } catch (e) {
             console.error('[UI] generateSolutions failed', e);
+            try { document.querySelectorAll('[onclick*="generateSolutions"]').forEach(b => b.disabled = false); } catch(_) {}
         }
     }
 
-    showTrainDetails(trainNumber) {
-        console.info('[UI] showTrainDetails', trainNumber);
-        // Placeholder: could open modal populated from schedule/live endpoints
+    async showTrainDetails(trainNumber) {
+        try {
+            console.info('[UI] showTrainDetails', trainNumber);
+            // Prevent concurrent detail requests
+            if (this._detailsLoading) return;
+            this._detailsLoading = true;
+            const data = await this.fetchWithRetry(`/api/train/${encodeURIComponent(trainNumber)}/details`, {}, 20000);
+            const modal = document.getElementById('solution-modal');
+            if (!modal) return;
+            modal.style.display = 'block';
+            const set = (sel, fn) => { const el = modal.querySelector(sel); if (el) fn(el); };
+            set('#modal-title', el => el.textContent = `Train ${trainNumber} Details`);
+            const d = data || {};
+            const train = d.train || {};
+            const route = Array.isArray(d.route) ? d.route.slice(0, 10) : [];
+            const rows = route.map((r, i) => {
+                const st = r.station || {};
+                const arr = r.scheduledArrival ?? r.schedule?.arrival ?? r.actualArrival ?? '';
+                const dep = r.scheduledDeparture ?? r.schedule?.departure ?? r.actualDeparture ?? '';
+                const plat = r.platform ?? r.livePlatform ?? '';
+                const delayA = r.delayArrivalMinutes ?? '';
+                const delayD = r.delayDepartureMinutes ?? '';
+                return `<tr>
+                    <td>${i+1}</td><td>${st.code || r.stationCode || ''}</td>
+                    <td>${st.name || r.stationName || ''}</td>
+                    <td>${arr}</td><td>${dep}</td>
+                    <td>${plat}</td>
+                    <td>${delayA || delayD || ''}</td>
+                </tr>`;
+            }).join('');
+            set('#modal-body', el => el.innerHTML = `
+                <div class="table">
+                    <div><strong>Status:</strong> ${d.status || 'Unknown'} | <strong>Delay:</strong> ${d.overall_delay_minutes || 0} min | <strong>Updated:</strong> ${d.last_updated || '-'}</div>
+                    <div><strong>Current:</strong> ${d.current_location || '-'} | <strong>Date:</strong> ${d.journey_date || '-'}</div>
+                </div>
+                <div class="table-wrapper" style="max-height:240px;overflow:auto;margin-top:8px;">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>#</th><th>Code</th><th>Station</th><th>Sch Arr</th><th>Sch Dep</th><th>Plat</th><th>Delay</th></tr>
+                        </thead>
+                        <tbody>${rows || '<tr><td colspan="7">No route data</td></tr>'}</tbody>
+                    </table>
+                </div>
+            `);
+            // repurpose footer buttons
+            const accept = modal.querySelector('#modal-accept');
+            const reject = modal.querySelector('#modal-reject');
+            const adjustAccept = modal.querySelector('#modal-adjust-accept');
+            const closeBtn = modal.querySelector('#modal-close');
+            const xBtn = modal.querySelector('.close-modal');
+            const close = () => modal.style.display = 'none';
+            if (accept) accept.onclick = close;
+            if (reject) reject.onclick = close;
+            if (adjustAccept) adjustAccept.onclick = close;
+            if (closeBtn) closeBtn.onclick = close; if (xBtn) xBtn.onclick = close;
+        } catch (e) {
+            console.error('[UI] showTrainDetails failed', e);
+        } finally {
+            this._detailsLoading = false;
+        }
+    }
+
+    // ----- Modal + Feedback Wiring -----
+    openSolutionModal(solutionId, title, contentHtml) {
+        const modal = document.getElementById('solution-modal');
+        if (!modal) return;
+        modal.style.display = 'block';
+        const set = (sel, fn) => { const el = modal.querySelector(sel); if (el) fn(el); };
+        set('#modal-title', el => el.textContent = title);
+        set('#modal-body', el => el.innerHTML = `
+            <div class="alert">Adjust parameters and confirm your decision.</div>
+            <div class="table">
+                <div>Solution ID: <strong>${solutionId}</strong></div>
+            </div>
+            ${contentHtml}
+        `);
+        const accept = modal.querySelector('#modal-accept');
+        const reject = modal.querySelector('#modal-reject');
+        const adjustAccept = modal.querySelector('#modal-adjust-accept');
+        const closeBtn = modal.querySelector('#modal-close');
+        const xBtn = modal.querySelector('.close-modal');
+        const close = () => modal.style.display = 'none';
+        const commit = (decision) => {
+            this.submitSolutionFeedback({ solution_id: solutionId, decision });
+            close();
+        };
+        accept.onclick = () => commit('accept');
+        reject.onclick = () => commit('reject');
+        if (adjustAccept) {
+            adjustAccept.onclick = () => {
+                this.submitSolutionFeedback({ solution_id: solutionId, decision: 'accept', adjusted: true });
+                close();
+            };
+        }
+        closeBtn.onclick = close; xBtn.onclick = close;
+    }
+
+    async submitSolutionFeedback(payload) {
+        try {
+            console.info('[UI] submitSolutionFeedback', payload);
+            const res = await fetch(`${this.apiBaseUrl}/api/solutions/feedback`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const body = await res.text();
+            console.info('[UI] feedback response', res.status, body.slice(0, 300));
+            await this.refreshSpecific('solutions');
+        } catch (e) {
+            console.error('[UI] submitSolutionFeedback failed', e);
+        }
+    }
+
+    async refreshSpecific(which) {
+        try {
+            if (which === 'solutions') {
+                const res = await this.fetchWithRetry('/api/solutions/active');
+                this.updateActiveSolutions(res);
+            }
+        } catch (e) {
+            console.error('[UI] refreshSpecific failed', which, e);
+        }
+    }
+
+    // ----- What-If Scenario Analysis -----
+    setupScenarioHandlers() {
+        try {
+            const container = document.querySelector('.what-if-analysis');
+            if (!container) return;
+            container.querySelectorAll('.scenario-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const scenario = btn.dataset.scenario || 'custom';
+                    const customDelay = Number(document.getElementById('custom-delay')?.value || 0);
+                    this.runScenario(scenario, { delay: customDelay });
+                });
+            });
+            console.info('[UI] What-If handlers attached');
+        } catch (e) {
+            console.error('[UI] setupScenarioHandlers failed', e);
+        }
+    }
+
+    runScenario(scenario, params = {}) {
+        try {
+            // Use current KPI as baseline
+            const base = this._lastKpi || { kpi_data: { throughput_metrics: {}, efficiency_metrics: {}, efficiency_score: {} } };
+            const metrics = base.kpi_data || {};
+            const throughput = metrics.throughput_metrics?.planned_throughput_trains_per_hour || 0;
+            const effPct = metrics.efficiency_metrics?.on_time_performance_percentage || 0;
+            const avgDelay = metrics.efficiency_metrics?.average_delay_minutes || 0;
+
+            // Simple deterministic impacts per scenario, bounded and safe; no live data mutation
+            let delta = { throughput: 0, eff: 0, delay: 0 };
+            switch (scenario) {
+                case 'reduce_headway':
+                    delta = { throughput: +0.5, eff: +2, delay: -1.0 }; break;
+                case 'weather_disruption':
+                    delta = { throughput: -0.3, eff: -5, delay: +4.0 }; break;
+                case 'add_delay':
+                    delta = { throughput: -0.2, eff: -3, delay: +6.0 }; break;
+                case 'emergency':
+                    delta = { throughput: -1.0, eff: -10, delay: +10.0 }; break;
+                default: // custom
+                    delta = { throughput: -Math.min(params.delay || 0, 60) * 0.01, eff: -(params.delay || 0) * 0.2, delay: +(params.delay || 0) };
+            }
+
+            const res = {
+                scenario,
+                before: { throughput, effPct, avgDelay },
+                after: {
+                    throughput: Math.max(0, throughput + delta.throughput),
+                    effPct: Math.max(0, Math.min(100, effPct + delta.eff)),
+                    avgDelay: Math.max(0, avgDelay + delta.delay)
+                },
+                delta
+            };
+
+            this.renderScenarioResult(res);
+        } catch (e) {
+            console.error('[UI] runScenario failed', e);
+        }
+    }
+
+    renderScenarioResult(result) {
+        const tgt = document.getElementById('what-if-result');
+        if (!tgt) return;
+        const tag = (x) => `<span style="font-weight:600">${x}</span>`;
+        tgt.innerHTML = `
+            <div class="fade-in">
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px;">
+                    <div class="alert">
+                        <div>Throughput</div>
+                        <div>Before: ${tag(result.before.throughput.toFixed(2))} → After: ${tag(result.after.throughput.toFixed(2))} (${result.delta.throughput>=0?'+':''}${result.delta.throughput.toFixed(2)})</div>
+                    </div>
+                    <div class="alert">
+                        <div>On-Time %</div>
+                        <div>Before: ${tag(result.before.effPct.toFixed(0))}% → After: ${tag(result.after.effPct.toFixed(0))}% (${result.delta.eff>=0?'+':''}${result.delta.eff.toFixed(0)}%)</div>
+                    </div>
+                    <div class="alert ${result.delta.delay>0?'error':''}">
+                        <div>Average Delay</div>
+                        <div>Before: ${tag(result.before.avgDelay.toFixed(1))}m → After: ${tag(result.after.avgDelay.toFixed(1))}m (${result.delta.delay>=0?'+':''}${result.delta.delay.toFixed(1)}m)</div>
+                    </div>
+                </div>
+                <div class="alert">Scenario: <strong>${result.scenario}</strong>. This is a non-destructive analysis. Live data is unaffected.</div>
+            </div>`;
+    }
+
+    // ----- Simulation -----
+    startSimulation() {
+        try {
+            if (!Array.isArray(this._scheduleCache) || this._scheduleCache.length === 0) {
+                console.warn('[SIM] No schedule to simulate');
+                return;
+            }
+            const speedSel = document.getElementById('simulation-speed-control');
+            this._simSpeed = Number(speedSel?.value || 1);
+            if (this._simTime == null) {
+                // Start at the nearest active window midpoint so trains are visible quickly
+                const windows = this._scheduleCache.map(t => ({
+                    s: (t.static_entry||0) + (t.delay_minutes||0),
+                    e: (t.static_exit||0) + (t.delay_minutes||0)
+                })).filter(w => w.e > w.s);
+                if (windows.length) {
+                    windows.sort((a,b) => (a.s - b.s));
+                    const first = windows[0];
+                    this._simTime = first.s + Math.min(5, (first.e - first.s)/2);
+                } else {
+                    this._simTime = this._scheduleCache.reduce((min, t) => Math.min(min, t.static_entry||0), Infinity) || 360;
+                }
+            }
+            if (this._simTimer) cancelAnimationFrame(this._simTimer);
+            this.simulationRunning = true;
+            const tick = () => {
+                if (!this.simulationRunning) return;
+                this._simulationTick();
+                this._simTimer = requestAnimationFrame(tick);
+            };
+            tick();
+        } catch (e) { console.error('[SIM] start failed', e); }
+    }
+
+    pauseSimulation() {
+        this.simulationRunning = false;
+    }
+
+    resetSimulation() {
+        this.simulationRunning = false;
+        this._simTime = undefined;
+        this._drawSimulationFrame();
+        const timeEl = document.getElementById('simulation-time');
+        if (timeEl) timeEl.textContent = '06:00';
+        const actEl = document.getElementById('simulation-active');
+        if (actEl) actEl.textContent = '0';
+        const thrEl = document.getElementById('simulation-throughput');
+        if (thrEl) thrEl.textContent = '0.0/hr';
+    }
+
+    _simulationTick() {
+        // advance time and draw
+        const dt = (1/60) * this._simSpeed; // minutes per frame ~ scaled
+        this._simTime = (this._simTime || 360) + dt;
+        this._drawSimulationFrame();
+    }
+
+    _fmtTime(mins) {
+        const m = Math.max(0, Math.floor(mins));
+        const h = Math.floor(m / 60) % 24; const mm = m % 60;
+        return `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+    }
+
+    _drawSimulationFrame() {
+        try {
+            const canvas = document.getElementById('simulationCanvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const W = canvas.width, H = canvas.height;
+            ctx.clearRect(0,0,W,H);
+            ctx.fillStyle = '#0b1220'; ctx.fillRect(0,0,W,H);
+            // rails
+            const tracks = Math.max(3, Math.min(10, (this._scheduleCache||[]).length));
+            const trackGap = H / (tracks+1);
+            ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2;
+            for (let i=1;i<=tracks;i++){ ctx.beginPath(); ctx.moveTo(0, i*trackGap); ctx.lineTo(W, i*trackGap); ctx.stroke(); }
+
+            const t0 = this._scheduleCache?.reduce((min,t)=>Math.min(min, t.static_entry||0), 1440) || 360;
+            const t1 = this._scheduleCache?.reduce((max,t)=>Math.max(max, t.static_exit||0), 0) || 900;
+            const span = Math.max(1, t1 - t0);
+            const now = this._simTime || t0;
+            const active = [];
+            (this._scheduleCache||[]).forEach((tr, idx) => {
+                const entry = (tr.static_entry||0) + (tr.delay_minutes||0);
+                const exit = (tr.static_exit||0) + (tr.delay_minutes||0);
+                const y = ((idx % tracks)+1) * trackGap;
+                // draw schedule bar
+                const x1 = ((entry - t0)/span)*W; const x2 = ((exit - t0)/span)*W;
+                ctx.fillStyle = '#334155'; ctx.fillRect(x1, y-6, Math.max(2, x2-x1), 12);
+                // draw train position if active
+                if (now >= entry && now <= exit) {
+                    const p = (now - entry) / Math.max(1,(exit-entry));
+                    const x = x1 + p * Math.max(2,x2-x1);
+                    const delayed = (tr.delay_minutes||0) > 10;
+                    ctx.fillStyle = delayed ? '#f39c12' : '#27ae60';
+                    ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI*2); ctx.fill();
+                    ctx.fillStyle = '#e5e7eb'; ctx.font = '12px Inter, sans-serif';
+                    ctx.fillText(String(tr.train_id), Math.min(W-40, x+8), y-8);
+                    active.push(tr);
+                }
+            });
+
+            const timeEl = document.getElementById('simulation-time');
+            if (timeEl) timeEl.textContent = this._fmtTime(now);
+            const actEl = document.getElementById('simulation-active');
+            if (actEl) actEl.textContent = String(active.length);
+            const thrEl = document.getElementById('simulation-throughput');
+            if (thrEl) thrEl.textContent = `${(active.length/ (span/60)).toFixed(1)}/hr`;
+        } catch (e) { console.error('[SIM] draw failed', e); }
     }
 }
 
