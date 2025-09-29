@@ -9,8 +9,9 @@ from typing import Dict, List, Optional
 
 
 class RailRadarDataCollector:
-    def __init__(self, api_key):
+    def __init__(self, api_key, config=None):
         self.api_key = api_key
+        self.config = config  # Store config reference
         self.session = requests.Session()
         self.session.headers.update({"x-api-key": api_key})
         self.base_url = "https://railradar.in/api/v1"
@@ -18,9 +19,39 @@ class RailRadarDataCollector:
         self.cache = {}
         self.last_request_time = {}
         # Allow overriding rate limit window for development
-        self.min_request_interval = int(os.environ.get('RAILRADAR_MIN_REQUEST_INTERVAL', '120'))  # seconds
+        self.min_request_interval = int(os.environ.get('RAILRADAR_MIN_REQUEST_INTERVAL', '15'))  # seconds - faster for live data
         self.logger = self._setup_logger()
-
+        
+        self.logger.info(f" [DATA COLLECTOR] initialized with API key: {api_key[:20]}...")
+        self.logger.info(f" [DATA COLLECTOR] Rate limit interval: {self.min_request_interval}s")
+        self.logger.info(f" [DATA COLLECTOR] Config provided: {config is not None}")
+        
+        # Test API connectivity immediately
+        self.test_api_connectivity()
+        
+    def test_api_connectivity(self):
+        """Test if the RailRadar API is accessible with our key"""
+        try:
+            self.logger.info("🔍 [API TEST] Testing RailRadar API connectivity...")
+            
+            # Test with a simple endpoint first
+            test_data = self._make_request("stations/NDLS/info")
+            
+            if isinstance(test_data, dict):
+                if "success" in test_data and test_data["success"]:
+                    self.logger.info("✅ [API TEST] RailRadar API is accessible and working!")
+                    return True
+                elif "error" in test_data:
+                    self.logger.error(f"❌ [API TEST] API returned error: {test_data['error']}")
+                    return False
+            
+            self.logger.warning("⚠️ [API TEST] API response format unexpected")
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"💥 [API TEST] Failed to test API connectivity: {e}")
+            return False
+        
     def _setup_logger(self):
         logger = logging.getLogger('DataCollector')
         logger.setLevel(logging.INFO)
@@ -129,31 +160,60 @@ class RailRadarDataCollector:
 
     def fetch_section_trains(self, from_station: str, to_station: str) -> List[Dict]:
         try:
-            self.logger.info(f"Fetching trains for section {from_station}-{to_station}")
+            self.logger.info(f"🔍 [LIVE API] Fetching trains between {from_station} and {to_station}")
+            self.logger.info(f"🔍 [LIVE API] Using RailRadar API endpoint: trains/between")
 
+            # Use the correct RailRadar API endpoint as per docs
             data = self._make_request("trains/between", {
                 "from": from_station,
                 "to": to_station
             })
 
+            self.logger.info(f"🔍 [LIVE API] Raw response received: {type(data)}")
+            
             if isinstance(data, dict) and "error" in data:
-                self.logger.warning(f"API error: {data['error']}")
+                self.logger.error(f"❌ [LIVE API] API error: {data['error']}")
                 return []
 
-            # Normalize any response shape to a list of train dicts
-            trains_list: List[Dict] = self._extract_trains_array(data)
+            # According to RailRadar docs, trains/between returns array directly in data field
+            trains_list = []
+            if isinstance(data, dict):
+                if "success" in data and data["success"] and "data" in data:
+                    # Standard RailRadar response format
+                    trains_list = data["data"] if isinstance(data["data"], list) else []
+                    self.logger.info(f"✅ [LIVE API] Found {len(trains_list)} trains in standard format")
+                    
+                    # Log the actual response structure for debugging
+                    if trains_list:
+                        sample_train = trains_list[0]
+                        self.logger.info(f"🔍 [LIVE API] Sample train keys: {list(sample_train.keys())}")
+                        self.logger.info(f"🔍 [LIVE API] Sample train data: {json.dumps(sample_train, indent=2)[:500]}...")
+                else:
+                    # Try to extract from different response formats
+                    trains_list = self._extract_trains_array(data)
+                    self.logger.info(f"✅ [LIVE API] Found {len(trains_list)} trains after normalization")
+            elif isinstance(data, list):
+                trains_list = data
+                self.logger.info(f"✅ [LIVE API] Found {len(trains_list)} trains in direct array format")
 
-            # Log shape for diagnostics
-            try:
-                shape = type(trains_list).__name__
-                sample_keys = list(trains_list[0].keys())[:5] if isinstance(trains_list, list) and trains_list else []
-                self.logger.info(f"Found {len(trains_list)} trains for section (shape={shape}, sample_keys={sample_keys})")
-            except Exception:
-                self.logger.info(f"Found {len(trains_list)} trains for section (shape=unknown)")
+            # Log detailed information about the trains found
+            if trains_list:
+                self.logger.info(f"🚂 [LIVE API] SUCCESS! Retrieved {len(trains_list)} live trains")
+                for i, train in enumerate(trains_list[:3]):  # Log first 3 trains
+                    train_num = train.get('trainNumber', train.get('train_number', 'Unknown'))
+                    train_name = train.get('trainName', train.get('train_name', 'Unknown'))
+                    self.logger.info(f"🚂 [LIVE API] Train {i+1}: {train_num} - {train_name}")
+            else:
+                self.logger.warning(f"⚠️ [LIVE API] No trains found between {from_station} and {to_station}")
+                self.logger.warning(f"⚠️ [LIVE API] This could mean:")
+                self.logger.warning(f"⚠️ [LIVE API] 1. No trains run on this route today")
+                self.logger.warning(f"⚠️ [LIVE API] 2. Station codes are incorrect")
+                self.logger.warning(f"⚠️ [LIVE API] 3. API response format changed")
+                
             return trains_list
 
         except Exception as e:
-            self.logger.error(f"Error fetching section trains: {e}")
+            self.logger.error(f"💥 [LIVE API] Exception fetching section trains: {e}")
             return []
 
     def fetch_train_live_status(self, train_number: str, journey_date: str = None) -> Dict:
@@ -336,21 +396,62 @@ class RailRadarDataCollector:
             return []
 
     def collect_section_data(self, from_station: str, to_station: str) -> Dict:
-        self.logger.info(f"Collecting data for section {from_station}-{to_station}")
+        self.logger.info(f"🚂 [LIVE DATA] Starting collection for section {from_station}-{to_station}")
+        
+        # Check if demo is enabled (should be False for live data)
+        use_demo = bool(os.environ.get('ENABLE_DEMO', '')) or bool(getattr(self.config, 'ENABLE_DEMO', False))
+        self.logger.info(f"🔧 [LIVE DATA] Demo mode status: {use_demo}")
+        
+        if use_demo:
+            self.logger.warning(f"⚠️ [LIVE DATA] Demo mode is ENABLED - this should be FALSE for live data!")
+        else:
+            self.logger.info(f"✅ [LIVE DATA] Demo mode is DISABLED - proceeding with LIVE data only")
 
         try:
-            # Try to fetch real data first
-            self.logger.info("Attempting to fetch real train data from API")
+            # FORCE live data collection - NO FALLBACKS
+            self.logger.info("🔍 [LIVE DATA] Attempting to fetch REAL train data from RailRadar API...")
+            self.logger.info(f"🔍 [LIVE DATA] API Key: {self.api_key[:20]}...")
+            self.logger.info(f"🔍 [LIVE DATA] Base URL: {self.base_url}")
+            
+            self.logger.info("🔍 [LIVE DATA] About to call fetch_section_trains...")
             trains_list = self.fetch_section_trains(from_station, to_station)
+            self.logger.info("🔍 [LIVE DATA] fetch_section_trains completed")
+            
+            self.logger.info(f"🔍 [LIVE DATA] Raw API response type: {type(trains_list)}")
+            self.logger.info(f"🔍 [LIVE DATA] Raw API response length: {len(trains_list) if isinstance(trains_list, list) else 'Not a list'}")
             
             # Safety: always normalize again here
+            self.logger.info("🔍 [LIVE DATA] Normalizing trains list...")
             trains_list = self._extract_trains_array(trains_list)
+            self.logger.info(f"🔍 [LIVE DATA] After normalization: {len(trains_list) if isinstance(trains_list, list) else 'Not a list'} trains")
 
             if not trains_list:
-                self.logger.warning("No trains found from API, falling back to static schedules")
-                static_schedules = self._load_static_schedules()
+                self.logger.error("❌ [LIVE DATA] NO TRAINS FOUND from RailRadar API!")
+                self.logger.error("❌ [LIVE DATA] This means either:")
+                self.logger.error("❌ [LIVE DATA] 1. API authentication failed")
+                self.logger.error("❌ [LIVE DATA] 2. No trains on this route today")
+                self.logger.error("❌ [LIVE DATA] 3. API response format changed")
+                self.logger.error("❌ [LIVE DATA] 4. Rate limiting blocked the request")
+                
+                # LIVE DATA ONLY - NO FALLBACKS
+                return {
+                    "section": f"{from_station}-{to_station}",
+                    "from_station": from_station,
+                    "to_station": to_station,
+                    "static_schedules": {},
+                    "valid_schedules": 0,
+                    "abnormalities": [],
+                    "timestamp": datetime.now().isoformat(),
+                    "data_source": "live_api_failed",
+                    "error": "No live trains found from RailRadar API"
+                }
             else:
-                self.logger.info(f"Found {len(trains_list)} trains from API")
+                self.logger.info(f"✅ [LIVE DATA] SUCCESS! Found {len(trains_list)} trains from RailRadar API")
+                
+                # Log first few trains for debugging
+                for i, train in enumerate(trains_list[:3]):
+                    self.logger.info(f"🚂 [LIVE DATA] Sample train {i+1}: {train.get('number', 'No number')} - {train.get('name', 'No name')}")
+                
                 # Process the trains list into static schedules format
                 static_schedules = {}
                 live_data_map = {}
@@ -461,7 +562,10 @@ class RailRadarDataCollector:
             return result
 
         except Exception as e:
-            self.logger.error(f"Error collecting section data: {e}")
+            self.logger.error(f"💥 [LIVE DATA] CRITICAL ERROR in collect_section_data: {e}")
+            self.logger.error(f"💥 [LIVE DATA] Exception type: {type(e).__name__}")
+            import traceback
+            self.logger.error(f"💥 [LIVE DATA] Full traceback: {traceback.format_exc()}")
             # Demo only if explicitly enabled
             if os.environ.get('ENABLE_DEMO', ''):
                 self.logger.info("Falling back to demo data due to error (unset ENABLE_DEMO to prevent)")
